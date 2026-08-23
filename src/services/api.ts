@@ -15,7 +15,10 @@ export interface DbSyncPayload {
   settings?: any;
 }
 
-export async function syncUserWithPostgres(user: { uid: string; email?: string | null; displayName?: string | null; photoURL?: string | null }, idToken?: string) {
+export async function syncUserWithPostgres(
+  user: { uid: string; email?: string | null; displayName?: string | null; photoURL?: string | null },
+  idToken?: string
+) {
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (idToken) {
@@ -34,11 +37,12 @@ export async function syncUserWithPostgres(user: { uid: string; email?: string |
     });
 
     if (!res.ok) {
-      console.warn('Sync user status:', res.status);
+      // Retorna null silenciosamente se o endpoint não estiver disponível (ex: Netlify)
+      return null;
     }
     return await res.json();
   } catch (error) {
-    console.error('Error syncing user with PostgreSQL:', error);
+    // Silencia erros de rede quando hospedado sem backend Node dedicado
     return null;
   }
 }
@@ -56,13 +60,12 @@ export async function loadUserDataFromPostgres(userId: string, idToken?: string)
     });
 
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
+      return null;
     }
 
     const json = await res.json();
     return json.data;
   } catch (error) {
-    console.error('Error loading data from PostgreSQL:', error);
     return null;
   }
 }
@@ -81,12 +84,11 @@ export async function syncDataToPostgres(payload: DbSyncPayload, idToken?: strin
     });
 
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
+      return null;
     }
 
     return await res.json();
   } catch (error) {
-    console.error('Error syncing data to PostgreSQL:', error);
     return null;
   }
 }
@@ -104,12 +106,11 @@ export async function deleteEntityFromPostgres(table: string, id: string, userId
     });
 
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
+      return null;
     }
 
     return await res.json();
   } catch (error) {
-    console.error(`Error deleting ${table} #${id} from PostgreSQL:`, error);
     return null;
   }
 }
@@ -117,8 +118,11 @@ export async function deleteEntityFromPostgres(table: string, id: string, userId
 export async function checkPostgresHealth() {
   try {
     const res = await fetch('/api/health/db');
+    if (!res.ok) {
+      return { status: 'offline', message: 'Backend local não configurado nesta rota' };
+    }
     return await res.json();
   } catch (error: any) {
-    return { status: 'error', error: error.message };
+    return { status: 'offline', error: error.message };
   }
 }
