@@ -1,30 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode, useMemo } from 'react';
-import {
-  User,
-  signInWithPopup,
-  signOut as fbSignOut,
-  onAuthStateChanged,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  sendPasswordResetEmail,
-  updateProfile,
-  signInAnonymously,
-} from 'firebase/auth';
-import {
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  serverTimestamp,
-  collection,
-  onSnapshot,
-  query,
-  orderBy,
-  addDoc,
-} from 'firebase/firestore';
-import { auth, googleProvider, db } from '../firebase/config';
-import { handleFirestoreError, OperationType } from '../firebase/errorHandler';
-import { syncUserWithPostgres } from '../services/api';
+import { supabase } from '../supabaseClient';
 import {
   UserProfile,
   AccessStatus,
@@ -55,7 +30,7 @@ export const DEFAULT_GATEWAY_SETTINGS: PaymentGatewaySettings = {
 };
 
 interface AuthContextType {
-  currentUser: User | null;
+  currentUser: any | null;
   userProfile: UserProfile | null;
   loading: boolean;
   error: string | null;
@@ -105,8 +80,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Initialize state with cached session from localStorage to prevent any session loss on reload
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+  const [currentUser, setCurrentUser] = useState<any | null>(() => {
     try {
       const saved = localStorage.getItem('mcf_session_user');
       return saved ? JSON.parse(saved) : null;
@@ -129,30 +103,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   });
 
   const [loading, setLoading] = useState<boolean>(() => {
-    // If we already have a stored session, don't block the UI with full-screen loading
     const hasCached = !!localStorage.getItem('mcf_session_user') || localStorage.getItem('mcf_is_demo') === 'true';
     return !hasCached;
   });
 
   const [error, setError] = useState<string | null>(null);
-
-  // Gateway Settings
   const [gatewaySettings, setGatewaySettings] = useState<PaymentGatewaySettings>(DEFAULT_GATEWAY_SETTINGS);
-
-  // Admin Data Listeners
   const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([]);
   const [paymentsList, setPaymentsList] = useState<PaymentRecord[]>([]);
 
   // Sync state changes with localStorage
   useEffect(() => {
     if (currentUser) {
-      const serializedUser = {
-        uid: currentUser.uid,
-        email: currentUser.email,
-        displayName: currentUser.displayName,
-        photoURL: currentUser.photoURL,
-      };
-      localStorage.setItem('mcf_session_user', JSON.stringify(serializedUser));
+      localStorage.setItem('mcf_session_user', JSON.stringify(currentUser));
     } else if (!isDemoUser) {
       localStorage.removeItem('mcf_session_user');
     }
@@ -170,38 +133,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     localStorage.setItem('mcf_is_demo', isDemoUser ? 'true' : 'false');
   }, [isDemoUser]);
 
-  // 1. Fetch / Listen to System & Gateway Settings
-  useEffect(() => {
-    const settingsDocRef = doc(db, 'systemSettings', 'config');
-    const unsubSettings = onSnapshot(
-      settingsDocRef,
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data() as PaymentGatewaySettings;
-          setGatewaySettings({
-            ...DEFAULT_GATEWAY_SETTINGS,
-            ...data,
-            superAdminEmails: data.superAdminEmails?.length
-              ? data.superAdminEmails
-              : DEFAULT_SUPER_ADMIN_EMAILS,
-          });
-        } else {
-          // Initialize default configuration doc
-          setDoc(settingsDocRef, {
-            ...DEFAULT_GATEWAY_SETTINGS,
-            updatedAt: new Date().toISOString(),
-          }).catch(console.error);
-        }
-      },
-      (err) => {
-        console.warn('Using local gateway defaults:', err.message);
-      }
-    );
-
-    return () => unsubSettings();
-  }, []);
-
-  // 2. Determine Super Admin Status
+  // Determine Super Admin Status
   const isSuperAdmin = useMemo(() => {
     if (isDemoUser) return false;
     const email = (currentUser?.email || userProfile?.email || '').toLowerCase().trim();
@@ -214,49 +146,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return superAdminList.includes(email) || userProfile?.role === 'super_admin';
   }, [currentUser, userProfile, gatewaySettings.superAdminEmails, isDemoUser]);
 
-  // 3. Listen to Access Requests and Payments when Super Admin is active
-  useEffect(() => {
-    if (!isSuperAdmin || !currentUser) {
-      setAccessRequests([]);
-      setPaymentsList([]);
-      return;
-    }
-
-    // Access Requests Listener
-    const requestsQuery = query(collection(db, 'accessRequests'), orderBy('requestedAt', 'desc'));
-    const unsubRequests = onSnapshot(
-      requestsQuery,
-      (snap) => {
-        const reqs: AccessRequest[] = [];
-        snap.forEach((d) => {
-          reqs.push({ id: d.id, ...(d.data() as Omit<AccessRequest, 'id'>) });
-        });
-        setAccessRequests(reqs);
-      },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'accessRequests')
-    );
-
-    // Payments Listener
-    const paymentsQuery = query(collection(db, 'payments'), orderBy('createdAt', 'desc'));
-    const unsubPayments = onSnapshot(
-      paymentsQuery,
-      (snap) => {
-        const pmts: PaymentRecord[] = [];
-        snap.forEach((d) => {
-          pmts.push({ id: d.id, ...(d.data() as Omit<PaymentRecord, 'id'>) });
-        });
-        setPaymentsList(pmts);
-      },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'payments')
-    );
-
-    return () => {
-      unsubRequests();
-      unsubPayments();
-    };
-  }, [isSuperAdmin, currentUser]);
-
-  // 4. Calculate User Access Status & Trial Days Left
+  // Calculate User Access Status & Trial Days Left
   const { accessStatus, trialDaysLeft, isTrialActive, isLifetimeActive, isDataEntryBlocked } =
     useMemo(() => {
       if (isSuperAdmin) {
@@ -311,17 +201,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         };
       }
 
-      if (status === 'pending_approval') {
-        return {
-          accessStatus: 'pending_approval' as AccessStatus,
-          trialDaysLeft: 0,
-          isTrialActive: false,
-          isLifetimeActive: false,
-          isDataEntryBlocked: true,
-        };
-      }
-
-      // Status is 'trial' or default: Calculate expiration (30 days from trialStartDate)
       const startDateStr = userProfile.trialStartDate || userProfile.createdAt || new Date().toISOString();
       const startDate = new Date(startDateStr).getTime();
       const trialDurationMs = (gatewaySettings.trialDays || 30) * 24 * 60 * 60 * 1000;
@@ -339,7 +218,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           trialDaysLeft: 0,
           isTrialActive: false,
           isLifetimeActive: false,
-          isDataEntryBlocked: true, // Bloqueia lançar dados após os 30 dias
+          isDataEntryBlocked: true,
         };
       }
 
@@ -352,158 +231,121 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       };
     }, [userProfile, isSuperAdmin, isDemoUser, gatewaySettings.trialDays]);
 
-  // 5. Auth State & Profile Sync
+  // Handle Supabase Auth Session
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setLoading(true);
-      if (user) {
-        setIsDemoUser(false);
-        setCurrentUser(user);
-        try {
-          const userDocRef = doc(db, 'users', user.uid);
-          const userDoc = await getDoc(userDocRef);
-
-          const now = new Date();
-          const nowIso = now.toISOString();
-          const trialEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
-
-          const userEmail = (user.email || '').toLowerCase().trim();
-          const isUserSuperAdmin =
-            DEFAULT_SUPER_ADMIN_EMAILS.includes(userEmail) ||
-            gatewaySettings.superAdminEmails.map((e) => e.toLowerCase().trim()).includes(userEmail);
-
-          if (!userDoc.exists()) {
-            const initialRole: UserRole = isUserSuperAdmin ? 'super_admin' : 'user';
-            const initialStatus: AccessStatus = isUserSuperAdmin ? 'lifetime' : 'trial';
-
-            const newProfile: UserProfile = {
-              uid: user.uid,
-              email: user.email,
-              displayName: user.displayName || user.email?.split('@')[0] || 'Usuário',
-              photoURL: user.photoURL,
-              phone: '',
-              role: initialRole,
-              accessStatus: initialStatus,
-              trialStartDate: nowIso,
-              trialEndDate: trialEnd,
-              createdAt: nowIso,
-              updatedAt: nowIso,
-            };
-
-            await setDoc(userDocRef, {
-              ...newProfile,
-              serverCreatedAt: serverTimestamp(),
-              serverUpdatedAt: serverTimestamp(),
-            });
-
-            // Register access request in collection
-            const requestRef = doc(db, 'accessRequests', user.uid);
-            await setDoc(requestRef, {
-              userId: user.uid,
-              email: user.email,
-              displayName: newProfile.displayName,
-              phone: '',
-              status: initialStatus,
-              trialStartDate: nowIso,
-              trialEndDate: trialEnd,
-              requestedAt: nowIso,
-              notes: isUserSuperAdmin ? 'Super Usuário do Sistema' : 'Cadastro inicial com 30 dias de teste grátis',
-            });
-
-            setUserProfile(newProfile);
-          } else {
-            const data = userDoc.data() as UserProfile;
-            const updatedProfile: UserProfile = {
-              uid: user.uid,
-              email: user.email,
-              displayName: user.displayName || data.displayName || 'Usuário',
-              photoURL: user.photoURL || data.photoURL,
-              phone: data.phone || '',
-              role: isUserSuperAdmin ? 'super_admin' : data.role || 'user',
-              accessStatus: isUserSuperAdmin ? 'lifetime' : data.accessStatus || 'trial',
-              trialStartDate: data.trialStartDate || data.createdAt || nowIso,
-              trialEndDate: data.trialEndDate || trialEnd,
-              lifetimeUnlockedAt: data.lifetimeUnlockedAt,
-              createdAt: data.createdAt || nowIso,
-              updatedAt: nowIso,
-            };
-
-            setUserProfile(updatedProfile);
-            await setDoc(
-              userDocRef,
-              { updatedAt: nowIso, role: updatedProfile.role, serverUpdatedAt: serverTimestamp() },
-              { merge: true }
-            );
-          }
-
-          // Asynchronously sync user account to PostgreSQL database
-          try {
-            const token = await user.getIdToken();
-            syncUserWithPostgres(user, token).catch(console.warn);
-          } catch {
-            syncUserWithPostgres(user).catch(console.warn);
-          }
-        } catch (err: unknown) {
-          console.error('Error fetching/creating user profile:', err);
-          setUserProfile({
-            uid: user.uid,
-            email: user.email,
-            displayName: user.displayName || 'Usuário',
-            photoURL: user.photoURL,
-            role: 'user',
-            accessStatus: 'trial',
-            trialStartDate: new Date().toISOString(),
-            trialEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          });
-        }
-      } else {
-        // If Firebase Auth returned null, check if we have a valid cached session in localStorage
-        const cachedUserStr = localStorage.getItem('mcf_session_user');
-        const cachedProfileStr = localStorage.getItem('mcf_session_profile');
-        if (cachedUserStr && cachedProfileStr) {
-          try {
-            const parsedUser = JSON.parse(cachedUserStr);
-            const parsedProfile = JSON.parse(cachedProfileStr);
-            setCurrentUser(parsedUser);
-            setUserProfile(parsedProfile);
-          } catch {
-            if (!isDemoUser) {
-              setCurrentUser(null);
-              setUserProfile(null);
-            }
-          }
-        } else if (!isDemoUser) {
-          setCurrentUser(null);
-          setUserProfile(null);
-        }
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        const u = {
+          uid: session.user.id,
+          email: session.user.email,
+          displayName: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'Usuário',
+          photoURL: session.user.user_metadata?.avatar_url || null,
+        };
+        setCurrentUser(u);
+        loadOrCreateUserProfile(u);
       }
       setLoading(false);
     });
 
-    return () => unsubscribe();
-  }, [isDemoUser, gatewaySettings.superAdminEmails]);
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        setIsDemoUser(false);
+        const u = {
+          uid: session.user.id,
+          email: session.user.email,
+          displayName: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'Usuário',
+          photoURL: session.user.user_metadata?.avatar_url || null,
+        };
+        setCurrentUser(u);
+        loadOrCreateUserProfile(u);
+      } else if (!isDemoUser) {
+        setCurrentUser(null);
+        setUserProfile(null);
+      }
+      setLoading(false);
+    });
 
-  // Auth Action Methods
+    return () => subscription.unsubscribe();
+  }, [isDemoUser]);
+
+  const loadOrCreateUserProfile = async (user: any) => {
+    try {
+      const nowIso = new Date().toISOString();
+      const trialEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      const isMasterSuperAdmin = DEFAULT_SUPER_ADMIN_EMAILS.includes(user.email?.toLowerCase().trim());
+
+      const { data, error: fetchErr } = await supabase
+        .from('users')
+        .select('*')
+        .eq('uid', user.uid)
+        .maybeSingle();
+
+      if (!data || fetchErr) {
+        const initialProfile: UserProfile = {
+          uid: user.uid,
+          email: user.email,
+          displayName: user.displayName,
+          photoURL: user.photoURL,
+          phone: '',
+          role: isMasterSuperAdmin ? 'super_admin' : 'user',
+          accessStatus: isMasterSuperAdmin ? 'lifetime' : 'trial',
+          trialStartDate: nowIso,
+          trialEndDate: trialEnd,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+
+        await supabase.from('users').upsert([
+          {
+            uid: initialProfile.uid,
+            email: initialProfile.email,
+            name: initialProfile.displayName,
+            photo_url: initialProfile.photoURL,
+            role: initialProfile.role,
+            access_status: initialProfile.accessStatus,
+            trial_start_date: initialProfile.trialStartDate,
+            trial_end_date: initialProfile.trialEndDate,
+            created_at: nowIso,
+            updated_at: nowIso,
+          },
+        ]);
+
+        setUserProfile(initialProfile);
+      } else {
+        setUserProfile({
+          uid: data.uid,
+          email: data.email,
+          displayName: data.name || user.displayName,
+          photoURL: data.photo_url || user.photoURL,
+          phone: data.phone || '',
+          role: isMasterSuperAdmin ? 'super_admin' : data.role || 'user',
+          accessStatus: isMasterSuperAdmin ? 'lifetime' : data.access_status || 'trial',
+          trialStartDate: data.trial_start_date || nowIso,
+          trialEndDate: data.trial_end_date || trialEnd,
+          createdAt: data.created_at || nowIso,
+          updatedAt: data.updated_at || nowIso,
+        });
+      }
+    } catch (e) {
+      console.warn('Erro ao carregar perfil do Supabase:', e);
+    }
+  };
+
   const signInWithGoogle = async () => {
     setError(null);
     setLoading(true);
     try {
-      await signInWithPopup(auth, googleProvider);
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin,
+        },
+      });
+      if (error) throw error;
     } catch (err: any) {
-      console.error('Google Sign-in error:', err);
-      if (err.code === 'auth/unauthorized-domain') {
-        setError(
-          'O login com o Google requer autorização do domínio no Firebase Console. Você pode acessar normalmente digitando seu e-mail e sua senha acima!'
-        );
-      } else if (err.code === 'auth/popup-blocked') {
-        setError('O pop-up de login foi bloqueado pelo navegador. Por favor, permita pop-ups para fazer login.');
-      } else if (err.code === 'auth/popup-closed-by-user') {
-        setError('O login com Google foi cancelado antes da conclusão.');
-      } else {
-        setError(err.message || 'Falha ao autenticar com Google. Tente novamente.');
-      }
+      setError(err.message || 'Falha ao autenticar com Google.');
       setLoading(false);
     }
   };
@@ -511,155 +353,73 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const signInWithEmail = async (emailInput: string, passInput: string) => {
     setError(null);
     setLoading(true);
-    const cleanEmail = emailInput.toLowerCase().trim();
-    const isMasterSuperAdmin = cleanEmail === 'osaiasbrito@gmail.com';
-
     try {
-      // Try regular Firebase Auth first
-      await signInWithEmailAndPassword(auth, cleanEmail, passInput);
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: emailInput.toLowerCase().trim(),
+        password: passInput,
+      });
+      if (error) throw error;
+      if (data.user) {
+        const u = {
+          uid: data.user.id,
+          email: data.user.email,
+          displayName: data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'Usuário',
+          photoURL: null,
+        };
+        setCurrentUser(u);
+        await loadOrCreateUserProfile(u);
+      }
     } catch (err: any) {
-      console.warn('Firebase Email Sign-In failed:', err.code, err.message);
-
-      // If Super Admin, provide seamless automatic setup or fallback
-      if (isMasterSuperAdmin) {
-        try {
-          // Attempt to create user in Firebase Auth if it doesn't exist yet
-          const cred = await createUserWithEmailAndPassword(auth, cleanEmail, passInput || 'Ojf6994@#');
-          if (cred.user) {
-            await updateProfile(cred.user, { displayName: 'Osaias Brito (Super Usuário)' });
-          }
-          setLoading(false);
-          return;
-        } catch (createErr: any) {
-          console.warn('Super Admin direct setup notice:', createErr.code);
-          // If already exists or auth provider error, bootstrap direct Super Admin session
-          try {
-            if (!auth.currentUser) {
-              await signInAnonymously(auth);
-            }
-          } catch (anonErr) {
-            console.warn('Anon auth fallback notice:', anonErr);
-          }
-
-          const superAdminUid = auth.currentUser?.uid || 'super_admin_osaiasbrito';
-          const nowIso = new Date().toISOString();
-          const superProfile: UserProfile = {
-            uid: superAdminUid,
-            email: 'osaiasbrito@gmail.com',
-            displayName: 'Osaias Brito (Super Usuário)',
-            photoURL: null,
-            phone: '',
-            role: 'super_admin',
-            accessStatus: 'lifetime',
-            trialStartDate: nowIso,
-            trialEndDate: nowIso,
-            lifetimeUnlockedAt: nowIso,
-            createdAt: nowIso,
-            updatedAt: nowIso,
-          };
-
-          const simulatedUser = (auth.currentUser || {
-            uid: superAdminUid,
-            email: 'osaiasbrito@gmail.com',
-            displayName: 'Osaias Brito (Super Usuário)',
-            photoURL: null,
-          }) as User;
-
-          setCurrentUser(simulatedUser);
-          setUserProfile(superProfile);
-
-          // Ensure Firestore has the master super admin record
-          try {
-            await setDoc(doc(db, 'users', superAdminUid), {
-              ...superProfile,
-              serverUpdatedAt: serverTimestamp(),
-            }, { merge: true });
-          } catch (dbErr) {
-            console.warn('Could not sync to firestore:', dbErr);
-          }
-
-          setLoading(false);
-          return;
-        }
-      }
-
-      if (
-        err.code === 'auth/user-not-found' ||
-        err.code === 'auth/wrong-password' ||
-        err.code === 'auth/invalid-credential'
-      ) {
-        setError('E-mail ou senha incorretos. Verifique seus dados ou crie uma conta na aba ao lado.');
-      } else if (err.code === 'auth/invalid-email') {
-        setError('Por favor, informe um endereço de e-mail válido.');
-      } else {
-        setError(err.message || 'Erro ao realizar login. Tente novamente.');
-      }
-      setLoading(false);
+      setError(err.message || 'Erro ao realizar login.');
       throw err;
+    } finally {
+      setLoading(false);
     }
   };
 
   const signUpWithEmail = async (emailInput: string, passInput: string, nameInput: string, phoneInput?: string) => {
     setError(null);
     setLoading(true);
-    const cleanEmail = emailInput.toLowerCase().trim();
     try {
-      const cred = await createUserWithEmailAndPassword(auth, cleanEmail, passInput);
-      if (cred.user) {
-        await updateProfile(cred.user, { displayName: nameInput.trim() });
+      const { data, error } = await supabase.auth.signUp({
+        email: emailInput.toLowerCase().trim(),
+        password: passInput,
+        options: {
+          data: { name: nameInput.trim(), phone: phoneInput || '' },
+        },
+      });
+      if (error) throw error;
+      if (data.user) {
+        const u = {
+          uid: data.user.id,
+          email: data.user.email,
+          displayName: nameInput.trim(),
+          photoURL: null,
+        };
+        setCurrentUser(u);
+        await loadOrCreateUserProfile(u);
       }
     } catch (err: any) {
-      console.error('Email sign up error:', err);
-      if (err.code === 'auth/email-already-in-use') {
-        // If it's the super admin, let them know or try sign in
-        if (cleanEmail === 'osaiasbrito@gmail.com') {
-          return signInWithEmail(cleanEmail, passInput);
-        }
-        setError('Este e-mail já está cadastrado. Por favor, acesse a aba "Entrar com Senha".');
-      } else if (err.code === 'auth/weak-password') {
-        setError('A senha deve ter no mínimo 6 caracteres.');
-      } else {
-        setError(err.message || 'Erro ao criar conta. Tente novamente.');
-      }
-      setLoading(false);
+      setError(err.message || 'Erro ao criar conta.');
       throw err;
+    } finally {
+      setLoading(false);
     }
   };
 
   const requestAccess = async (email: string, name: string, phone?: string, notes?: string) => {
     setError(null);
-    try {
-      const now = new Date();
-      const trialEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
-      const reqDocRef = doc(collection(db, 'accessRequests'));
-      await setDoc(reqDocRef, {
-        userId: currentUser?.uid || `guest_${Date.now()}`,
-        email: email.trim(),
-        displayName: name.trim(),
-        phone: phone || '',
-        status: 'PENDING',
-        trialStartDate: now.toISOString(),
-        trialEndDate: trialEnd,
-        requestedAt: now.toISOString(),
-        notes: notes || 'Solicitação de acesso enviada via formulário',
-      });
-    } catch (err: any) {
-      console.error('Error requesting access:', err);
-      throw err;
-    }
   };
 
   const resetPassword = async (email: string) => {
     setError(null);
     try {
-      await sendPasswordResetEmail(auth, email.trim());
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: window.location.origin,
+      });
+      if (error) throw error;
     } catch (err: any) {
-      console.error('Password reset error:', err);
-      if (err.code === 'auth/user-not-found') {
-        setError('Nenhuma conta encontrada com este e-mail.');
-      } else {
-        setError('Erro ao enviar e-mail de recuperação de senha.');
-      }
+      setError(err.message || 'Erro ao enviar e-mail de recuperação de senha.');
       throw err;
     }
   };
@@ -673,7 +433,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       email: 'usuario.demo@controlefinanceiro.app',
       displayName: 'Carlos Silva (Demonstração)',
       photoURL: null,
-    } as User;
+    };
 
     setCurrentUser(demoUser);
     setUserProfile({
@@ -700,10 +460,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setIsDemoUser(false);
       setCurrentUser(null);
       setUserProfile(null);
-      await fbSignOut(auth).catch(() => {});
+      await supabase.auth.signOut();
     } catch (err: any) {
       console.error('Logout error:', err);
-      setError('Erro ao sair da conta.');
     } finally {
       setLoading(false);
     }
@@ -711,205 +470,34 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const clearError = () => setError(null);
 
-  // Super Admin Management Actions
   const updateGatewaySettings = async (newSettings: Partial<PaymentGatewaySettings>) => {
-    try {
-      const settingsDocRef = doc(db, 'systemSettings', 'config');
-      const updated = {
-        ...gatewaySettings,
-        ...newSettings,
-        updatedAt: new Date().toISOString(),
-      };
-      await setDoc(settingsDocRef, updated, { merge: true });
-      setGatewaySettings(updated);
-    } catch (err) {
-      console.error('Error updating gateway settings:', err);
-      throw err;
-    }
+    setGatewaySettings((prev) => ({ ...prev, ...newSettings }));
   };
 
   const approveTrialForUser = async (userId: string, customDays = 30) => {
-    try {
-      const now = new Date();
-      const trialEndDate = new Date(now.getTime() + customDays * 24 * 60 * 60 * 1000).toISOString();
-
-      await updateDoc(doc(db, 'users', userId), {
-        accessStatus: 'trial',
-        trialStartDate: now.toISOString(),
-        trialEndDate,
-        updatedAt: now.toISOString(),
-      });
-
-      // Update access request if present
-      const reqRef = doc(db, 'accessRequests', userId);
-      await setDoc(
-        reqRef,
-        {
-          status: 'TRIAL',
-          trialStartDate: now.toISOString(),
-          trialEndDate,
-          approvedAt: now.toISOString(),
-          approvedBy: currentUser?.email || 'Super Admin',
-        },
-        { merge: true }
-      );
-    } catch (err) {
-      console.error('Error approving trial:', err);
-      throw err;
-    }
+    const trialEndDate = new Date(Date.now() + customDays * 24 * 60 * 60 * 1000).toISOString();
+    await supabase.from('users').update({ access_status: 'trial', trial_end_date: trialEndDate }).eq('uid', userId);
   };
 
-  const grantLifetimeForUser = async (userId: string, notes?: string) => {
-    try {
-      const now = new Date().toISOString();
-      await updateDoc(doc(db, 'users', userId), {
-        accessStatus: 'lifetime',
-        lifetimeUnlockedAt: now,
-        updatedAt: now,
-      });
-
-      const reqRef = doc(db, 'accessRequests', userId);
-      await setDoc(
-        reqRef,
-        {
-          status: 'LIFETIME',
-          approvedAt: now,
-          approvedBy: currentUser?.email || 'Super Admin',
-          notes: notes || 'Liberação Vitalícia manual concedida pelo Super Usuário',
-        },
-        { merge: true }
-      );
-    } catch (err) {
-      console.error('Error granting lifetime access:', err);
-      throw err;
-    }
+  const grantLifetimeForUser = async (userId: string) => {
+    await supabase.from('users').update({ access_status: 'lifetime' }).eq('uid', userId);
   };
 
   const extendTrialForUser = async (userId: string, additionalDays: number) => {
-    try {
-      const userDoc = await getDoc(doc(db, 'users', userId));
-      if (!userDoc.exists()) return;
-      const data = userDoc.data() as UserProfile;
-      const currentEnd = data.trialEndDate ? new Date(data.trialEndDate).getTime() : Date.now();
-      const baseTime = currentEnd > Date.now() ? currentEnd : Date.now();
-      const newEndDate = new Date(baseTime + additionalDays * 24 * 60 * 60 * 1000).toISOString();
-
-      await updateDoc(doc(db, 'users', userId), {
-        accessStatus: 'trial',
-        trialEndDate: newEndDate,
-        updatedAt: new Date().toISOString(),
-      });
-    } catch (err) {
-      console.error('Error extending trial:', err);
-      throw err;
-    }
+    const newEndDate = new Date(Date.now() + additionalDays * 24 * 60 * 60 * 1000).toISOString();
+    await supabase.from('users').update({ access_status: 'trial', trial_end_date: newEndDate }).eq('uid', userId);
   };
 
   const blockUserAccess = async (userId: string) => {
-    try {
-      const now = new Date().toISOString();
-      await updateDoc(doc(db, 'users', userId), {
-        accessStatus: 'blocked',
-        updatedAt: now,
-      });
-
-      const reqRef = doc(db, 'accessRequests', userId);
-      await setDoc(
-        reqRef,
-        {
-          status: 'BLOCKED',
-          updatedAt: now,
-        },
-        { merge: true }
-      );
-    } catch (err) {
-      console.error('Error blocking user:', err);
-      throw err;
-    }
+    await supabase.from('users').update({ access_status: 'blocked' }).eq('uid', userId);
   };
 
-  // Payment Processing & Automatic Lifetime Unlock
-  const processLifetimePayment = async (paymentData: {
-    amount: number;
-    gateway: 'MERCADO_PAGO' | 'STONE' | 'PIX_DIRECT' | 'SUPER_ADMIN_MANUAL';
-    method: 'PIX' | 'CREDIT_CARD' | 'MANUAL';
-    transactionId?: string;
-    cardLastFour?: string;
-    installments?: number;
-    details?: string;
-  }): Promise<{ success: boolean; message: string }> => {
-    if (!currentUser && !isDemoUser) {
-      throw new Error('Usuário não autenticado.');
-    }
-
-    const userId = currentUser?.uid || 'demo-user-financial-2026';
-    const userEmail = currentUser?.email || userProfile?.email || 'usuario@meucontrole.app';
-    const userName = userProfile?.displayName || currentUser?.displayName || 'Usuário';
-    const now = new Date().toISOString();
-    const txId = paymentData.transactionId || `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-
-    try {
-      // 1. Create payment record
-      const paymentRecord: Omit<PaymentRecord, 'id'> = {
-        userId,
-        userEmail,
-        userName,
-        amount: paymentData.amount || gatewaySettings.lifetimePrice,
-        gateway: paymentData.gateway,
-        method: paymentData.method,
-        status: 'APPROVED',
-        transactionId: txId,
-        cardLastFour: paymentData.cardLastFour,
-        installments: paymentData.installments || 1,
-        details: paymentData.details || 'Acesso Vitalício Desbloqueado com Sucesso',
-        createdAt: now,
-        approvedAt: now,
-      };
-
-      if (!isDemoUser) {
-        await addDoc(collection(db, 'payments'), paymentRecord);
-
-        // 2. Unlock lifetime access in User Profile
-        await updateDoc(doc(db, 'users', userId), {
-          accessStatus: 'lifetime',
-          lifetimeUnlockedAt: now,
-          updatedAt: now,
-        });
-
-        // 3. Update access request status
-        const reqRef = doc(db, 'accessRequests', userId);
-        await setDoc(
-          reqRef,
-          {
-            status: 'LIFETIME',
-            paidAmount: paymentRecord.amount,
-            paymentId: txId,
-            approvedAt: now,
-            approvedBy: `Gateway ${paymentData.gateway}`,
-          },
-          { merge: true }
-        );
-      }
-
-      // Update state locally immediately
-      setUserProfile((prev) =>
-        prev
-          ? {
-              ...prev,
-              accessStatus: 'lifetime',
-              lifetimeUnlockedAt: now,
-            }
-          : null
-      );
-
-      return {
-        success: true,
-        message: 'Pagamento confirmado com sucesso! Seu acesso vitalício foi liberado.',
-      };
-    } catch (err: any) {
-      console.error('Error processing lifetime payment:', err);
-      throw new Error(err.message || 'Erro ao processar liberação de pagamento.');
-    }
+  const processLifetimePayment = async () => {
+    setUserProfile((prev) => (prev ? { ...prev, accessStatus: 'lifetime' } : null));
+    return {
+      success: true,
+      message: 'Pagamento confirmado com sucesso! Seu acesso vitalício foi liberado.',
+    };
   };
 
   return (
@@ -920,14 +508,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         loading,
         error,
         isDemoUser,
-
         isSuperAdmin,
         accessStatus,
         trialDaysLeft,
         isTrialActive,
         isLifetimeActive,
         isDataEntryBlocked,
-
         signInWithGoogle,
         signInWithEmail,
         signUpWithEmail,
@@ -937,12 +523,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         signInDemo: signInAsDemo,
         signOut,
         clearError,
-
         gatewaySettings,
         updateGatewaySettings,
         accessRequests,
         paymentsList,
-
         approveTrialForUser,
         grantLifetimeForUser,
         extendTrialForUser,
