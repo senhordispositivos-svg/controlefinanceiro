@@ -25,6 +25,9 @@ import {
   Check,
   X,
   AlertTriangle,
+  Database,
+  Server,
+  Activity,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { formatCurrency, formatDateBR } from '../utils/formatters';
@@ -44,9 +47,24 @@ export const SuperAdminView: React.FC = () => {
     blockUserAccess,
   } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<'requests' | 'pricing' | 'gateways' | 'payments'>('requests');
+  const [activeTab, setActiveTab] = useState<'requests' | 'pricing' | 'gateways' | 'payments' | 'database'>('requests');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [dbHealth, setDbHealth] = useState<any>(null);
+  const [checkingDb, setCheckingDb] = useState(false);
+
+  const checkDb = async () => {
+    setCheckingDb(true);
+    try {
+      const res = await fetch('/api/health/db');
+      const data = await res.json();
+      setDbHealth(data);
+    } catch (err: any) {
+      setDbHealth({ status: 'error', error: err.message });
+    } finally {
+      setCheckingDb(false);
+    }
+  };
 
   // Form State for Pricing & Gateways
   const [formData, setFormData] = useState<PaymentGatewaySettings>({ ...gatewaySettings });
@@ -247,15 +265,18 @@ export const SuperAdminView: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab('payments')}
+          onClick={() => {
+            setActiveTab('database');
+            if (!dbHealth) checkDb();
+          }}
           className={`px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 transition-all shrink-0 cursor-pointer ${
-            activeTab === 'payments'
+            activeTab === 'database'
               ? 'bg-slate-900 text-white shadow-xs'
               : 'text-slate-600 hover:bg-slate-100'
           }`}
         >
-          <Receipt className="w-4 h-4" />
-          <span>Extrato de Pagamentos ({paymentsList.length})</span>
+          <Database className="w-4 h-4 text-emerald-500" />
+          <span>Banco PostgreSQL</span>
         </button>
       </div>
 
@@ -888,6 +909,160 @@ export const SuperAdminView: React.FC = () => {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* TAB 5: BANCO DE DADOS POSTGRESQL */}
+      {activeTab === 'database' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/80 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
+                  <Database className="w-5 h-5 text-emerald-600" />
+                  Conexão Direta com Banco PostgreSQL (Supabase)
+                </h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  Gerenciador e monitoramento de conexão exclusiva com o banco relacional PostgreSQL (Supabase Cloud).
+                </p>
+              </div>
+
+              <button
+                onClick={checkDb}
+                disabled={checkingDb}
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${checkingDb ? 'animate-spin' : ''}`} />
+                <span>{checkingDb ? 'Testando Conexão...' : 'Testar Conexão'}</span>
+              </button>
+            </div>
+
+            {/* Status Card */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                  Motor de Banco
+                </span>
+                <span className="text-sm font-black text-slate-900 flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                  PostgreSQL (Supabase Cloud)
+                </span>
+              </div>
+
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                  Super Usuário Autorizado
+                </span>
+                <span className="text-sm font-black text-emerald-600">
+                  osaiasbrito@gmail.com
+                </span>
+              </div>
+
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                  ORM & Camada de Acesso
+                </span>
+                <span className="text-sm font-black text-slate-900">
+                  Drizzle ORM + PG Driver
+                </span>
+              </div>
+            </div>
+
+            {dbHealth && (
+              <div
+                className={`p-4 rounded-2xl border text-xs font-semibold space-y-2 transition-all ${
+                  dbHealth.status === 'ok' || dbHealth.connected === true
+                    ? 'bg-emerald-50/90 border-emerald-200 text-emerald-900'
+                    : 'bg-rose-50/90 border-rose-200 text-rose-900'
+                }`}
+              >
+                <div className="flex items-center gap-2 font-bold text-sm">
+                  {dbHealth.status === 'ok' || dbHealth.connected === true ? (
+                    <>
+                      <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-600" />
+                      <span>Conexão ativa e operando com sucesso!</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle className="w-5 h-5 shrink-0 text-rose-600" />
+                      <span>Falha na conexão com o banco de dados</span>
+                    </>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-[11px]">
+                  <div className="bg-white/80 p-2 rounded-xl border border-slate-200/60">
+                    <span className="text-slate-400 block text-[9px] uppercase font-sans font-bold">Status</span>
+                    <span className="font-bold text-emerald-600 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                      ONLINE
+                    </span>
+                  </div>
+                  <div className="bg-white/80 p-2 rounded-xl border border-slate-200/60">
+                    <span className="text-slate-400 block text-[9px] uppercase font-sans font-bold">Latência / Ping</span>
+                    <span className="font-bold text-slate-800">{dbHealth.latencyMs ? `${dbHealth.latencyMs} ms` : '< 50 ms'}</span>
+                  </div>
+                  <div className="bg-white/80 p-2 rounded-xl border border-slate-200/60">
+                    <span className="text-slate-400 block text-[9px] uppercase font-sans font-bold">Banco Conectado</span>
+                    <span className="font-bold text-slate-800">{dbHealth.database || 'postgres'}</span>
+                  </div>
+                  <div className="bg-white/80 p-2 rounded-xl border border-slate-200/60">
+                    <span className="text-slate-400 block text-[9px] uppercase font-sans font-bold">Último Teste</span>
+                    <span className="font-bold text-slate-800">
+                      {dbHealth.timestamp ? new Date(dbHealth.timestamp).toLocaleTimeString('pt-BR') : new Date().toLocaleTimeString('pt-BR')}
+                    </span>
+                  </div>
+                </div>
+
+                {dbHealth.version && (
+                  <p className="text-[10px] text-slate-500 font-mono truncate pt-1">
+                    Versão: {dbHealth.version}
+                  </p>
+                )}
+
+                {dbHealth.error && (
+                  <p className="text-xs text-rose-700 bg-rose-100/70 p-2.5 rounded-xl font-mono">
+                    Detalhes do erro: {dbHealth.error}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Tables Overview */}
+          <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/80 shadow-xs space-y-4">
+            <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+              <Server className="w-4 h-4 text-slate-700" />
+              Tabelas Ativas no PostgreSQL
+            </h3>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              {[
+                { name: 'users', label: 'Usuários & Super Usuário', icon: Users },
+                { name: 'user_settings', label: 'Configurações de Usuário', icon: Sliders },
+                { name: 'salaries', label: 'Salários & Rendimentos', icon: DollarSign },
+                { name: 'extra_incomes', label: 'Rendas Extras Avulsas', icon: TrendingUp },
+                { name: 'expenses', label: 'Despesas & Lançamentos', icon: Receipt },
+                { name: 'credit_cards', label: 'Cartões de Crédito', icon: CreditCard },
+                { name: 'payment_methods', label: 'Métodos de Pagamento', icon: Check },
+                { name: 'installment_purchases', label: 'Compras Parceladas', icon: Clock },
+                { name: 'categories', label: 'Categorias do Usuário', icon: Sparkles },
+                { name: 'budgets', label: 'Orçamentos Mensais', icon: Crown },
+                { name: 'backups', label: 'Cópias de Segurança', icon: Database },
+              ].map((t) => {
+                const IconComponent = t.icon;
+                return (
+                  <div key={t.name} className="p-3.5 bg-slate-50 hover:bg-slate-100/80 rounded-2xl border border-slate-200/70 transition-all">
+                    <div className="flex items-center gap-2 mb-1">
+                      <IconComponent className="w-3.5 h-3.5 text-emerald-600" />
+                      <span className="font-mono font-bold text-xs text-slate-900">{t.name}</span>
+                    </div>
+                    <span className="text-[11px] text-slate-500 block leading-tight">{t.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       )}
     </div>

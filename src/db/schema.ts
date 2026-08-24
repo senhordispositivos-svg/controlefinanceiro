@@ -1,13 +1,16 @@
 import { pgTable, serial, text, doublePrecision, boolean, integer, timestamp, jsonb } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
-// Users table (Firebase Auth linked via uid)
+// Users table (PostgreSQL / Auth)
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
-  uid: text('uid').notNull().unique(), // Firebase Auth UID
+  uid: text('uid').notNull().unique(), // User UID / Identifier
   email: text('email').notNull(),
   name: text('name'),
   photoUrl: text('photo_url'),
+  role: text('role').default('USER'), // 'SUPERADMIN' | 'ADMIN' | 'USER'
+  isSuperUser: boolean('is_super_user').default(false),
+  password: text('password'), // Direct password or hash
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 });

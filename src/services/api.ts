@@ -15,10 +15,7 @@ export interface DbSyncPayload {
   settings?: any;
 }
 
-export async function syncUserWithPostgres(
-  user: { uid: string; email?: string | null; displayName?: string | null; photoURL?: string | null },
-  idToken?: string
-) {
+export async function syncUserWithPostgres(user: { uid: string; email?: string | null; displayName?: string | null; photoURL?: string | null }, idToken?: string) {
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (idToken) {
@@ -37,12 +34,11 @@ export async function syncUserWithPostgres(
     });
 
     if (!res.ok) {
-      // Retorna null silenciosamente se o endpoint não estiver disponível (ex: Netlify)
-      return null;
+      console.warn('Sync user status:', res.status);
     }
     return await res.json();
   } catch (error) {
-    // Silencia erros de rede quando hospedado sem backend Node dedicado
+    console.error('Error syncing user with PostgreSQL:', error);
     return null;
   }
 }
@@ -60,12 +56,13 @@ export async function loadUserDataFromPostgres(userId: string, idToken?: string)
     });
 
     if (!res.ok) {
-      return null;
+      throw new Error(`HTTP ${res.status}`);
     }
 
     const json = await res.json();
     return json.data;
   } catch (error) {
+    console.error('Error loading data from PostgreSQL:', error);
     return null;
   }
 }
@@ -84,11 +81,12 @@ export async function syncDataToPostgres(payload: DbSyncPayload, idToken?: strin
     });
 
     if (!res.ok) {
-      return null;
+      throw new Error(`HTTP ${res.status}`);
     }
 
     return await res.json();
   } catch (error) {
+    console.error('Error syncing data to PostgreSQL:', error);
     return null;
   }
 }
@@ -106,23 +104,42 @@ export async function deleteEntityFromPostgres(table: string, id: string, userId
     });
 
     if (!res.ok) {
-      return null;
+      throw new Error(`HTTP ${res.status}`);
     }
 
     return await res.json();
   } catch (error) {
+    console.error(`Error deleting ${table} #${id} from PostgreSQL:`, error);
     return null;
+  }
+}
+
+export async function superuserLogin(password: string) {
+  try {
+    const res = await fetch('/api/auth/superuser-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'osaiasbrito@gmail.com',
+        password,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Falha no login');
+    }
+    return await res.json();
+  } catch (error: any) {
+    console.error('Erro no login de super usuário:', error);
+    throw error;
   }
 }
 
 export async function checkPostgresHealth() {
   try {
     const res = await fetch('/api/health/db');
-    if (!res.ok) {
-      return { status: 'offline', message: 'Backend local não configurado nesta rota' };
-    }
     return await res.json();
   } catch (error: any) {
-    return { status: 'offline', error: error.message };
+    return { status: 'error', error: error.message };
   }
 }

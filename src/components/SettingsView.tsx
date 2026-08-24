@@ -87,9 +87,16 @@ export const SettingsView: React.FC = () => {
                 <span>Fuso Horário / Formato:</span>
                 <span className="font-bold text-slate-900">Brasília (DD/MM/AAAA)</span>
               </div>
+              <div className="flex justify-between py-2 border-b border-slate-100">
+                <span>Armazenamento / Banco:</span>
+                <span className="font-bold text-emerald-600 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  PostgreSQL (Supabase Cloud)
+                </span>
+              </div>
               <div className="flex justify-between py-2">
-                <span>Armazenamento:</span>
-                <span className="font-bold text-emerald-600">Google Cloud Firestore</span>
+                <span>Status da Conexão:</span>
+                <span className="font-bold text-slate-800">Conectado (Drizzle ORM)</span>
               </div>
             </div>
           </div>

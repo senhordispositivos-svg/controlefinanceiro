@@ -12,11 +12,19 @@ import {
   upsertUserSettings,
   testDatabaseConnection,
 } from './src/db/repositories';
+import { ensureDatabaseTables } from './src/db/init';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
+  // Initialize Database Tables in PostgreSQL
+  try {
+    await ensureDatabaseTables();
+  } catch (err) {
+    console.error('Falha ao inicializar tabelas PostgreSQL:', err);
+  }
+
   const app = express();
   const PORT = 3000;
 
@@ -34,6 +42,38 @@ async function startServer() {
       res.json(dbStatus);
     } catch (error: any) {
       res.status(500).json({ status: 'error', message: error.message });
+    }
+  });
+
+  // Super User direct authentication via PostgreSQL
+  app.post('/api/auth/superuser-login', async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      const cleanEmail = email?.toLowerCase()?.trim();
+      const validPass = password === 'Ojf6994@#gestaoPessoas' || password === 'Ojf6994@#' || password === 'Ojf6994@#gestãoPessoas';
+
+      if (cleanEmail === 'osaiasbrito@gmail.com' && validPass) {
+        const user = await getOrCreateUser(
+          'osaiasbrito@gmail.com',
+          'osaiasbrito@gmail.com',
+          'Osaias Brito (Super Usuário)'
+        );
+        return res.json({
+          success: true,
+          isSuperUser: true,
+          role: 'SUPERADMIN',
+          user: {
+            uid: 'osaiasbrito@gmail.com',
+            email: 'osaiasbrito@gmail.com',
+            displayName: 'Osaias Brito (Super Usuário)',
+            role: 'SUPERADMIN',
+            isSuperUser: true,
+          },
+        });
+      }
+      return res.status(401).json({ error: 'Credenciais de super usuário inválidas' });
+    } catch (error: any) {
+      res.status(500).json({ error: 'Erro na autenticação de super usuário', details: error.message });
     }
   });
 
