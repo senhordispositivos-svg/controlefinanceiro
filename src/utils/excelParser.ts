@@ -312,8 +312,18 @@ export function parseExcelWorkbook(
     const amount = normalizeExcelAmount(rawAmount);
     const { date, referenceMonth } = normalizeExcelDate(rawDate);
     const categoryName = String(rawCat || 'Outros').trim() || 'Outros';
-    const paymentMethod = normalizePaymentMethod(rawMethod || (rawCard ? 'CARTAO_CREDITO' : ''));
-    const cardName = rawCard ? String(rawCard).trim() : undefined;
+    const catLower = categoryName.toLowerCase();
+    let paymentMethod = normalizePaymentMethod(rawMethod || (rawCard ? 'CARTAO_CREDITO' : ''));
+    if (catLower === 'pix' || /\bpix\b/i.test(catLower)) {
+      paymentMethod = 'PIX';
+    } else if (catLower === 'boleto' || /\bboleto\b/i.test(catLower)) {
+      paymentMethod = 'BOLETO';
+    } else if (catLower.includes('debito') || catLower.includes('débito')) {
+      paymentMethod = 'CARTAO_DEBITO';
+    } else if (catLower.includes('dinheiro') || catLower.includes('especie') || catLower.includes('espécie')) {
+      paymentMethod = 'DINHEIRO';
+    }
+    const cardName = paymentMethod === 'CARTAO_CREDITO' && rawCard ? String(rawCard).trim() : undefined;
     const notes = rawNotes ? String(rawNotes).trim() : undefined;
 
     // Detect paid status

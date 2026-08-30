@@ -230,13 +230,16 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
       return;
     }
 
-    if (paymentMethod === 'CARTAO_CREDITO' && (!cardId || creditCards.length === 0)) {
+    const selectedCat = categories.find((c) => c.id === categoryId) || categories[0];
+    const categoryName = selectedCat?.name || 'Geral';
+    const isPixCat = categoryName.toLowerCase().trim() === 'pix' || /\bpix\b/i.test(categoryName);
+    const effectivePaymentMethod: PaymentMethod = isPixCat ? 'PIX' : paymentMethod;
+
+    if (effectivePaymentMethod === 'CARTAO_CREDITO' && (!cardId || creditCards.length === 0)) {
       setErrorMsg('Por favor, selecione ou cadastre um cartão de crédito.');
       return;
     }
 
-    const selectedCat = categories.find((c) => c.id === categoryId) || categories[0];
-    const categoryName = selectedCat?.name || 'Geral';
     const cardName = selectedCard ? `${selectedCard.name} (${selectedCard.bank})` : undefined;
     const selectedCustomMethod = paymentMethods.find((pm) => pm.id === paymentMethodId);
     const customMethodName = selectedCustomMethod?.name;
@@ -260,13 +263,13 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
             referenceMonth,
             categoryId: selectedCat?.id || '',
             categoryName,
-            paymentMethod,
+            paymentMethod: effectivePaymentMethod,
             paymentMethodId:
-              paymentMethod !== 'CARTAO_CREDITO' && paymentMethodId ? paymentMethodId : undefined,
-            paymentMethodName: paymentMethod !== 'CARTAO_CREDITO' ? customMethodName : undefined,
-            cardId: paymentMethod === 'CARTAO_CREDITO' ? cardId : undefined,
+              effectivePaymentMethod !== 'CARTAO_CREDITO' && paymentMethodId ? paymentMethodId : undefined,
+            paymentMethodName: effectivePaymentMethod !== 'CARTAO_CREDITO' ? customMethodName : undefined,
+            cardId: effectivePaymentMethod === 'CARTAO_CREDITO' ? cardId : undefined,
             cardName:
-              paymentMethod === 'CARTAO_CREDITO'
+              effectivePaymentMethod === 'CARTAO_CREDITO'
                 ? selectedCard?.name || expenseToEdit.cardName || 'Cartão de Crédito'
                 : undefined,
             status,
@@ -281,8 +284,8 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
           totalAmount: effectiveParcelAmount, // monthly recurring amount
           installmentCount: 24,
           startMonth,
-          cardId: paymentMethod === 'CARTAO_CREDITO' ? cardId : 'other-method',
-          cardName: paymentMethod === 'CARTAO_CREDITO' ? cardName : customMethodName || paymentMethod,
+          cardId: effectivePaymentMethod === 'CARTAO_CREDITO' ? cardId : 'other-method',
+          cardName: effectivePaymentMethod === 'CARTAO_CREDITO' ? cardName : customMethodName || effectivePaymentMethod,
           categoryId: selectedCat?.id || '',
           categoryName,
           defaultDay: effectiveDay,
@@ -296,8 +299,8 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
           totalAmount: effectiveTotalAmount,
           installmentCount: activeInstallmentCount,
           startMonth,
-          cardId: paymentMethod === 'CARTAO_CREDITO' ? cardId : 'other-method',
-          cardName: paymentMethod === 'CARTAO_CREDITO' ? cardName : customMethodName || paymentMethod,
+          cardId: effectivePaymentMethod === 'CARTAO_CREDITO' ? cardId : 'other-method',
+          cardName: effectivePaymentMethod === 'CARTAO_CREDITO' ? cardName : customMethodName || effectivePaymentMethod,
           categoryId: selectedCat?.id || '',
           categoryName,
           defaultDay: effectiveDay,
@@ -726,7 +729,23 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({
             </label>
             <select
               value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
+              onChange={(e) => {
+                const newCatId = e.target.value;
+                setCategoryId(newCatId);
+                const selected = categories.find((c) => c.id === newCatId);
+                if (selected) {
+                  const lowerName = selected.name.toLowerCase().trim();
+                  if (lowerName === 'pix' || /\bpix\b/i.test(lowerName)) {
+                    setPaymentMethod('PIX');
+                    const pixPm = paymentMethods.find((pm) => pm.type === 'PIX');
+                    if (pixPm) setPaymentMethodId(pixPm.id);
+                  } else if (lowerName === 'boleto' || /\bboleto\b/i.test(lowerName)) {
+                    setPaymentMethod('BOLETO');
+                    const bolPm = paymentMethods.find((pm) => pm.type === 'BOLETO');
+                    if (bolPm) setPaymentMethodId(bolPm.id);
+                  }
+                }
+              }}
               className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:bg-white focus:border-emerald-500 focus:outline-hidden transition-all text-sm"
             >
               {categories.map((cat) => (

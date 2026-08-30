@@ -10,8 +10,29 @@ import {
   CardLimitSummary,
   MonthBudgetSummary,
   BudgetExecutionItem,
+  InstallmentPurchase,
+  MonthInstallmentsAndSingleSummary,
 } from '../types';
 import { getAdjacentMonth, splitInstallments } from './formatters';
+import { isExpenseMatchingCard, isPixExpense, isBoletoExpense, isDebitExpense, isCashExpense } from './cardUtils';
+
+/**
+ * Checks whether an expense is an indefinite / recurring continuous subscription (prazo indeterminado)
+ */
+export const isIndefiniteExpense = (
+  expense: Expense,
+  installmentPurchases: InstallmentPurchase[] = []
+): boolean => {
+  if (expense.isIndefinite) return true;
+  if (expense.isInstallment && expense.totalInstallments === 0) return true;
+  if (expense.description && /indeterminado/i.test(expense.description)) return true;
+  if (expense.notes && /indeterminado/i.test(expense.notes)) return true;
+  if (expense.installmentPurchaseId && installmentPurchases && installmentPurchases.length > 0) {
+    const parent = installmentPurchases.find((p) => p.id === expense.installmentPurchaseId);
+    if (parent?.isIndefinite) return true;
+  }
+  return false;
+};
 
 /**
  * Returns the effective salaries for a given month.
@@ -110,9 +131,16 @@ export const calculateMonthSummary = (
     .reduce((acc, curr) => acc + (curr.amount || 0), 0);
   const pendingExpenses = totalExpenses - paidExpenses;
 
-  // Credit card invoice for this month
+  // Credit card invoice for this month (excluding Pix, Boleto, Débito, and Dinheiro)
   const creditCardInvoiceTotal = monthExpenses
-    .filter((e) => e.paymentMethod === 'CARTAO_CREDITO')
+    .filter(
+      (e) =>
+        e.paymentMethod === 'CARTAO_CREDITO' &&
+        !isPixExpense(e) &&
+        !isBoletoExpense(e) &&
+        !isDebitExpense(e) &&
+        !isCashExpense(e)
+    )
     .reduce((acc, curr) => acc + (curr.amount || 0), 0);
 
   // Balances
@@ -148,19 +176,34 @@ export const calculateMonthSummary = (
 export const calculateCardLimit = (
   card: CreditCard,
   allExpenses: Expense[],
-  currentMonth: string
+  currentMonth: string,
+  installmentPurchases: InstallmentPurchase[] = [],
+  registeredCards: CreditCard[] = []
 ): CardLimitSummary => {
   // All credit card expenses for this card that are not yet paid, or future installments
-  const cardExpenses = allExpenses.filter((e) => e.cardId === card.id);
+  const cardExpenses = allExpenses.filter(
+    (e) =>
+      e.cardId === card.id ||
+      isExpenseMatchingCard(e, card.id, card.name, registeredCards.length > 0 ? registeredCards : [card])
+  );
 
   // Current month invoice: all card expenses mapped to currentMonth
   const currentMonthInvoice = cardExpenses
     .filter((e) => e.referenceMonth === currentMonth)
     .reduce((acc, curr) => acc + (curr.amount || 0), 0);
 
-  // Total used limit: all UNPAID card expenses across all months (pending current, past unpaid + future scheduled installments)
+  // Total used limit:
+  // - Fixed purchases & standard installments: all unpaid expenses (past, present, and future) consume limit
+  // - Indefinite recurring purchases (prazo indeterminado): only unpaid expenses for current and past months (referenceMonth <= currentMonth) consume limit! Future projections do not lock limit.
   const usedLimit = cardExpenses
-    .filter((e) => e.status === 'PENDENTE')
+    .filter((e) => {
+      if (e.status !== 'PENDENTE') return false;
+      const isIndefinite = isIndefiniteExpense(e, installmentPurchases);
+      if (isIndefinite && e.referenceMonth && e.referenceMonth > currentMonth) {
+        return false;
+      }
+      return true;
+    })
     .reduce((acc, curr) => acc + (curr.amount || 0), 0);
 
   const availableLimit = Math.max(0, card.totalLimit - usedLimit);
@@ -199,8 +242,8 @@ export const generateInstallmentsPlan = (
   const result: Omit<Expense, 'id' | 'createdAt' | 'updatedAt'>[] = [];
 
   if (isIndefinite) {
-    // For indefinite installment/recurrence, generate initial 24 months projection that user can interrupt at any point
-    const projectionMonths = 24;
+    // For indefinite installment/recurrence, generate initial 6 months projection (user can extend by 3 or 6 months when reaching the end)
+    const projectionMonths = 6;
     const monthlyVal = totalAmount; // For indefinite, totalAmount entered is the monthly amount
 
     for (let i = 0; i < projectionMonths; i++) {
@@ -225,7 +268,7 @@ export const generateInstallmentsPlan = (
         installmentNumber: i + 1,
         totalInstallments: 0, // 0 signifies indefinite
         status: 'PENDENTE',
-        notes: `Lançamento contínuo por tempo indeterminado (Mês ${i + 1}). Pode ser interrompido a qualquer tempo.`,
+        notes: `Lançamento contínuo por tempo indeterminado (Mês ${i + 1}/6). Pode ser prorrogado por mais 3 ou 6 meses ou interrompido a qualquer tempo.`,
       });
     }
 
@@ -262,4 +305,76 @@ export const generateInstallmentsPlan = (
   }
 
   return result;
+};
+
+/**
+ * Calculates summary of final installments (últimas parcelas) and single / à vista expenses for a selected month,
+ * as well as the combined non-recurring total that will be released from future months' budgets.
+ */
+export const calculateMonthInstallmentsAndSingleSummary = (
+  referenceMonth: string,
+  expenses: Expense[],
+  installmentPurchases: InstallmentPurchase[] = []
+): MonthInstallmentsAndSingleSummary => {
+  const monthExpenses = expenses.filter(
+    (e) => (e.referenceMonth || (e.date ? e.date.substring(0, 7) : '')) === referenceMonth
+  );
+
+  // 1. Últimas Parcelas (Finalizam neste mês)
+  // Despesas parceladas com prazo fixo onde o número da parcela é igual ao total de parcelas (ex: 4/4, 6/6, 12/12)
+  const lastInstallments: Expense[] = [];
+
+  // 2. Compras à Vista (Pagas em 1x / sem parcelamento)
+  const singleExpenses: Expense[] = [];
+
+  for (const exp of monthExpenses) {
+    const isIndefinite = isIndefiniteExpense(exp, installmentPurchases);
+
+    if (isIndefinite) {
+      // Indefinite continuous subscriptions are recurring, not fixed single or fixed final installments
+      continue;
+    }
+
+    if (exp.isInstallment && exp.totalInstallments && exp.totalInstallments > 1) {
+      if (exp.installmentNumber === exp.totalInstallments) {
+        lastInstallments.push(exp);
+      }
+    } else {
+      // Single / À vista (Cartão à vista, Pix, Boleto, Débito, Dinheiro, etc.)
+      singleExpenses.push(exp);
+    }
+  }
+
+  const lastInstallmentsTotal = lastInstallments.reduce((acc, curr) => acc + (curr.amount || 0), 0);
+  const lastInstallmentsCount = lastInstallments.length;
+
+  const singleExpensesTotal = singleExpenses.reduce((acc, curr) => acc + (curr.amount || 0), 0);
+  const singleExpensesCount = singleExpenses.length;
+
+  const singleCardExpenses = singleExpenses.filter((e) => e.paymentMethod === 'CARTAO_CREDITO');
+  const singleCardExpensesTotal = singleCardExpenses.reduce((acc, curr) => acc + (curr.amount || 0), 0);
+  const singleCardExpensesCount = singleCardExpenses.length;
+
+  const singleOtherExpenses = singleExpenses.filter((e) => e.paymentMethod !== 'CARTAO_CREDITO');
+  const singleOtherExpensesTotal = singleOtherExpenses.reduce((acc, curr) => acc + (curr.amount || 0), 0);
+  const singleOtherExpensesCount = singleOtherExpenses.length;
+
+  const combinedTotal = lastInstallmentsTotal + singleExpensesTotal;
+  const combinedCount = lastInstallmentsCount + singleExpensesCount;
+
+  return {
+    referenceMonth,
+    lastInstallmentsTotal,
+    lastInstallmentsCount,
+    lastInstallments,
+    singleExpensesTotal,
+    singleExpensesCount,
+    singleExpenses,
+    singleCardExpensesTotal,
+    singleCardExpensesCount,
+    singleOtherExpensesTotal,
+    singleOtherExpensesCount,
+    combinedTotal,
+    combinedCount,
+  };
 };

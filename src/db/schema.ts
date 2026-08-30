@@ -161,6 +161,7 @@ export const expenses = pgTable('expenses', {
   isRecurring: boolean('is_recurring').default(false),
   recurringExpenseId: text('recurring_expense_id'),
   isInstallment: boolean('is_installment').default(false),
+  isIndefinite: boolean('is_indefinite').default(false),
   installmentNumber: integer('installment_number'),
   totalInstallments: integer('total_installments'),
   installmentPurchaseId: text('installment_purchase_id'),

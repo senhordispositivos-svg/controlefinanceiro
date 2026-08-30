@@ -242,6 +242,27 @@ export interface MonthBudgetSummary {
   criticalAlerts: BudgetExecutionItem[]; // Apenas itens em WARNING ou EXCEEDED
 }
 
+export interface MonthInstallmentsAndSingleSummary {
+  referenceMonth: string;
+  // Últimas parcelas (finalizando este mês)
+  lastInstallmentsTotal: number;
+  lastInstallmentsCount: number;
+  lastInstallments: Expense[];
+  // Compras à vista (geral)
+  singleExpensesTotal: number;
+  singleExpensesCount: number;
+  singleExpenses: Expense[];
+  // Compras à vista no cartão de crédito
+  singleCardExpensesTotal: number;
+  singleCardExpensesCount: number;
+  // Compras à vista em outros métodos (Pix, Boleto, Débito, Dinheiro, etc.)
+  singleOtherExpensesTotal: number;
+  singleOtherExpensesCount: number;
+  // Total combinado (Últimas parcelas + Compras à vista)
+  combinedTotal: number;
+  combinedCount: number;
+}
+
 export interface UserSettings {
   userId: string;
   theme: AppTheme;

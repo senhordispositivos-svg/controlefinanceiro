@@ -29,6 +29,7 @@ import {
 import { useFinance } from '../context/FinanceContext';
 import { formatCurrency, getMonthName, getShortMonthName, getAdjacentMonth } from '../utils/formatters';
 import { calculateMonthSummary } from '../utils/calculations';
+import { resolveEffectivePaymentMethod } from '../utils/cardUtils';
 
 const COLORS = [
   '#10B981', '#3B82F6', '#F59E0B', '#EF4444', '#8B5CF6',
@@ -36,7 +37,7 @@ const COLORS = [
 ];
 
 export const ReportsView: React.FC = () => {
-  const { selectedMonth, salaries, incomes, expenses, categories, monthSummary } = useFinance();
+  const { selectedMonth, salaries, incomes, expenses, categories, creditCards, paymentMethods, monthSummary } = useFinance();
   const [activeTab, setActiveTab] = useState<'evolution' | 'categories' | 'monthBalance'>('evolution');
 
   // Month-specific expense items
@@ -90,7 +91,7 @@ export const ReportsView: React.FC = () => {
   const paymentMethodData = useMemo(() => {
     const map = new Map<string, number>();
     for (const exp of monthExpenses) {
-      const method = exp.paymentMethod || 'OUTRO';
+      const method = resolveEffectivePaymentMethod(exp, categories, creditCards);
       const labelMap: Record<string, string> = {
         PIX: 'Pix',
         CARTAO_CREDITO: 'Cartão de Crédito',
@@ -102,7 +103,7 @@ export const ReportsView: React.FC = () => {
       map.set(label, (map.get(label) || 0) + exp.amount);
     }
     return Array.from(map.entries()).map(([name, value]) => ({ name, value }));
-  }, [monthExpenses]);
+  }, [monthExpenses, categories, creditCards]);
 
   // Single month comparison data
   const singleMonthComparisonData = [

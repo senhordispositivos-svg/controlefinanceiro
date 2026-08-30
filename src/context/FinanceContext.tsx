@@ -30,6 +30,7 @@ import {
   BackupData,
   CustomPaymentMethod,
   PaymentMethod,
+  MonthInstallmentsAndSingleSummary,
 } from '../types';
 import { DEFAULT_CATEGORIES } from '../utils/defaultCategories';
 import { getCanonicalCardInfo, isExpenseMatchingCard } from '../utils/cardUtils';
@@ -41,6 +42,7 @@ import {
   generateInstallmentsPlan,
   getEffectiveSalariesForMonth,
   getEffectiveIncomesForMonth,
+  calculateMonthInstallmentsAndSingleSummary,
 } from '../utils/calculations';
 import { ParsedSpreadsheetItem } from '../utils/excelParser';
 import { syncDataToPostgres, deleteEntityFromPostgres, loadUserDataFromPostgres } from '../services/api';
@@ -76,6 +78,7 @@ interface FinanceContextType {
 
   monthSummary: MonthFinancialSummary;
   cardLimitSummaries: CardLimitSummary[];
+  monthInstallmentsAndSingleSummary: MonthInstallmentsAndSingleSummary;
   loading: boolean;
   error: string | null;
 
@@ -147,6 +150,11 @@ interface FinanceContextType {
       monthlyAmount?: number;
     }
   ) => Promise<string>;
+  extendIndefinitePurchase: (
+    purchaseId: string,
+    additionalMonths: 3 | 6,
+    newMonthlyAmount?: number
+  ) => Promise<void>;
   deleteInstallmentPurchase: (purchaseId: string, deleteOnlyExpenseId?: string) => Promise<void>;
   interruptInstallmentPurchase: (purchaseId: string, stopFromMonth?: string) => Promise<void>;
 
@@ -755,10 +763,17 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     return calculateMonthSummary(selectedMonth, salaries, incomes, expenses, settings);
   }, [selectedMonth, salaries, incomes, expenses, settings]);
 
+  // Installments & Single expenses summary for selected month
+  const monthInstallmentsAndSingleSummary = useMemo(() => {
+    return calculateMonthInstallmentsAndSingleSummary(selectedMonth, expenses, installmentPurchases);
+  }, [selectedMonth, expenses, installmentPurchases]);
+
   // Credit cards summary
   const cardLimitSummaries = useMemo(() => {
-    return creditCards.map((card) => calculateCardLimit(card, expenses, selectedMonth));
-  }, [creditCards, expenses, selectedMonth]);
+    return creditCards.map((card) =>
+      calculateCardLimit(card, expenses, selectedMonth, installmentPurchases, creditCards)
+    );
+  }, [creditCards, expenses, selectedMonth, installmentPurchases]);
 
   // Filtered expenses
   const filteredExpenses = useMemo(() => {
@@ -1412,7 +1427,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const nowIso = new Date().toISOString();
 
     const isIndefinite = !!purchaseData.isIndefinite;
-    const count = isIndefinite ? 24 : (purchaseData.installmentCount || 2);
+    const count = isIndefinite ? 6 : (purchaseData.installmentCount || 2);
     const card = creditCards.find((c) => c.id === purchaseData.cardId);
     const cardName = purchaseData.cardName || card?.name || 'Cartão Crédito';
 
@@ -1522,6 +1537,123 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     }
 
     return purchaseId;
+  };
+
+  const extendIndefinitePurchase = async (
+    purchaseId: string,
+    additionalMonths: 3 | 6,
+    newMonthlyAmount?: number
+  ): Promise<void> => {
+    if (!currentUser) throw new Error('Usuário não autenticado');
+    if (isDataEntryBlocked) {
+      throw new Error('Seu período de teste de 30 dias expirou.');
+    }
+
+    const purchase = installmentPurchases.find((p) => p.id === purchaseId);
+    if (!purchase) throw new Error('Compra/Assinatura não encontrada');
+
+    const linkedExpenses = expenses
+      .filter((e) => e.installmentPurchaseId === purchaseId)
+      .sort((a, b) => (a.referenceMonth || '').localeCompare(b.referenceMonth || ''));
+
+    // Determine the last reference month and last installment number
+    let lastMonth = purchase.startMonth;
+    let lastNum = 0;
+    let defaultDay = 10;
+    const effectiveAmount =
+      newMonthlyAmount && newMonthlyAmount > 0
+        ? newMonthlyAmount
+        : purchase.monthlyAmount || purchase.totalAmount || 0;
+
+    if (linkedExpenses.length > 0) {
+      const lastExp = linkedExpenses[linkedExpenses.length - 1];
+      lastMonth =
+        lastExp.referenceMonth ||
+        (lastExp.date ? lastExp.date.substring(0, 7) : purchase.startMonth);
+      lastNum = lastExp.installmentNumber || linkedExpenses.length;
+      const dayFromDate = lastExp.date ? parseInt(lastExp.date.split('-')[2] || '10', 10) : 10;
+      defaultDay = Math.min(28, Math.max(1, dayFromDate));
+    }
+
+    const nowIso = new Date().toISOString();
+    const newExpenses: Expense[] = [];
+
+    for (let i = 1; i <= additionalMonths; i++) {
+      const nextMonth = getAdjacentMonth(lastMonth, i);
+      const dayStr = String(defaultDay).padStart(2, '0');
+      const dateStr = `${nextMonth}-${dayStr}`;
+      const currentNum = lastNum + i;
+
+      newExpenses.push({
+        id: isDemoUser ? `demo-inst-exp-${purchaseId}-${currentNum}-${Date.now()}` : '',
+        userId: currentUser.uid,
+        description: `${purchase.title} (Mês ${currentNum} - Indeterminado)`,
+        amount: effectiveAmount,
+        date: dateStr,
+        referenceMonth: nextMonth,
+        categoryId: purchase.categoryId,
+        categoryName: purchase.categoryName,
+        paymentMethod: 'CARTAO_CREDITO',
+        cardId: purchase.cardId,
+        cardName: purchase.cardName,
+        isInstallment: true,
+        isIndefinite: true,
+        installmentPurchaseId: purchaseId,
+        installmentNumber: currentNum,
+        totalInstallments: 0,
+        status: 'PENDENTE',
+        notes: `Prorrogação de assinatura contínua (+${additionalMonths} meses). Lançamento mês ${currentNum}.`,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
+    }
+
+    const updatedPurchaseCount = (purchase.installmentCount || linkedExpenses.length) + additionalMonths;
+    const updatedPurchaseData: Partial<InstallmentPurchase> = {
+      installmentCount: updatedPurchaseCount,
+      monthlyAmount: effectiveAmount,
+      status: 'ACTIVE',
+      isInterrupted: false,
+      updatedAt: nowIso,
+    };
+
+    if (isDemoUser) {
+      setInstallmentPurchases((prev) =>
+        prev.map((p) => (p.id === purchaseId ? { ...p, ...updatedPurchaseData } : p))
+      );
+      setExpenses((prev) => [...prev, ...newExpenses]);
+      return;
+    }
+
+    const batch = writeBatch(db);
+    batch.update(
+      doc(db, 'installmentPurchases', purchaseId),
+      sanitizeData({
+        ...updatedPurchaseData,
+        serverUpdatedAt: serverTimestamp(),
+      })
+    );
+
+    const realExpenseItems: Expense[] = [];
+    for (const exp of newExpenses) {
+      const expDoc = doc(collection(db, 'expenses'));
+      const realItem = { ...exp, id: expDoc.id };
+      realExpenseItems.push(realItem);
+      batch.set(
+        expDoc,
+        sanitizeData({
+          ...realItem,
+          serverCreatedAt: serverTimestamp(),
+        })
+      );
+    }
+
+    setInstallmentPurchases((prev) =>
+      prev.map((p) => (p.id === purchaseId ? { ...p, ...updatedPurchaseData } : p))
+    );
+    setExpenses((prev) => [...prev, ...realExpenseItems]);
+
+    await batch.commit();
   };
 
   const deleteInstallmentPurchase = async (purchaseId: string, deleteOnlyExpenseId?: string): Promise<void> => {
@@ -2126,6 +2258,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         settings,
         monthSummary,
         cardLimitSummaries,
+        monthInstallmentsAndSingleSummary,
         loading,
         error,
         addSalary,
@@ -2152,6 +2285,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         markAllCardExpensesStatus,
         markAllMethodExpensesStatus,
         createInstallmentPurchase,
+        extendIndefinitePurchase,
         deleteInstallmentPurchase,
         interruptInstallmentPurchase,
         addCategory,

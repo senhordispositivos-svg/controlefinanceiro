@@ -34,10 +34,21 @@ import {
   Square,
 } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
-import { Expense, PaymentMethod } from '../types';
+import { Expense, PaymentMethod, InstallmentPurchase } from '../types';
 import { formatCurrency, formatDateBR, getMonthName, getCurrentMonth } from '../utils/formatters';
-import { getCanonicalCardInfo, isExpenseMatchingCard } from '../utils/cardUtils';
+import {
+  getCanonicalCardInfo,
+  isExpenseMatchingCard,
+  isPixExpense,
+  isBoletoExpense,
+  isDebitExpense,
+  isCashExpense,
+  isExpenseMatchingPaymentMethod,
+} from '../utils/cardUtils';
 import { ConfirmDeleteModal } from './modals/ConfirmDeleteModal';
+import { NonRecurringExpensesSummary } from './NonRecurringExpensesSummary';
+import { IndefiniteEndingAlerts } from './IndefiniteEndingAlerts';
+import { ExtendIndefiniteModal } from './modals/ExtendIndefiniteModal';
 
 interface ExpensesViewProps {
   onOpenExpenseModal: (expenseToEdit?: Expense) => void;
@@ -74,11 +85,15 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     deleteMultipleExpenses,
     updateMultipleExpensesStatus,
     interruptInstallmentPurchase,
+    extendIndefinitePurchase,
     monthSummary,
+    monthInstallmentsAndSingleSummary,
+    installmentPurchases,
   } = useFinance();
 
   const [showFilters, setShowFilters] = useState(false);
   const [activeTabStatus, setActiveTabStatus] = useState<'ALL' | 'PENDENTE' | 'PAGA'>('ALL');
+  const [extendModalPurchase, setExtendModalPurchase] = useState<InstallmentPurchase | null>(null);
   const [activeBreakdownFilter, setActiveBreakdownFilter] = useState<ActiveBreakdownFilter>({
     type: 'ALL',
   });
@@ -125,21 +140,6 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
           count: 0,
           total: 0,
         });
-      }
-    });
-
-    // Populate expenses for registered credit cards ONLY
-    monthExpenses.forEach((exp) => {
-      if (exp.paymentMethod === 'CARTAO_CREDITO') {
-        const canonical = getCanonicalCardInfo(exp.cardId, exp.cardName, creditCards);
-        if (canonical.isRegistered) {
-          const groupKey = canonical.canonicalName;
-          const existing = cardGroupMap.get(groupKey);
-          if (existing) {
-            existing.count += 1;
-            existing.total += exp.amount || 0;
-          }
-        }
       }
     });
 
@@ -216,10 +216,33 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
       });
     }
 
-    // Now calculate expenses for non-card methods
+    // Consolidate expenses into cards and non-card payment methods
     monthExpenses.forEach((exp) => {
-      if (exp.paymentMethod !== 'CARTAO_CREDITO') {
-        const method = exp.paymentMethod || 'PIX';
+      const isPix = isPixExpense(exp, categories);
+      const isBoleto = !isPix && isBoletoExpense(exp, categories);
+      const isDebit = !isPix && !isBoleto && isDebitExpense(exp, categories);
+      const isCash = !isPix && !isBoleto && !isDebit && isCashExpense(exp, categories);
+      const isNonCard = isPix || isBoleto || isDebit || isCash || exp.paymentMethod !== 'CARTAO_CREDITO';
+
+      if (!isNonCard && exp.paymentMethod === 'CARTAO_CREDITO') {
+        const canonical = getCanonicalCardInfo(exp.cardId, exp.cardName, creditCards);
+        if (canonical.isRegistered) {
+          const groupKey = canonical.canonicalName;
+          const existing = cardGroupMap.get(groupKey);
+          if (existing) {
+            existing.count += 1;
+            existing.total += exp.amount || 0;
+          }
+        }
+      } else {
+        // Non-card payment (Pix, Boleto, Débito, Dinheiro, etc.)
+        let method: PaymentMethod = 'PIX';
+        if (isPix) method = 'PIX';
+        else if (isBoleto) method = 'BOLETO';
+        else if (isDebit) method = 'CARTAO_DEBITO';
+        else if (isCash) method = 'DINHEIRO';
+        else method = exp.paymentMethod || 'PIX';
+
         // Try match by paymentMethodId first
         let matchedItem = exp.paymentMethodId ? methodMap.get(exp.paymentMethodId) : undefined;
         // If not matched by id, match by method type (e.g. PIX)
@@ -289,7 +312,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
       methods: methodsList,
       totalCardCount: cardsList.reduce((acc, c) => acc + c.count, 0),
     };
-  }, [expenses, selectedMonth, creditCards, paymentMethods]);
+  }, [expenses, selectedMonth, creditCards, paymentMethods, categories]);
 
   // Filtered by sub-tab and clicked breakdown card/method
   const displayedExpenses = useMemo(() => {
@@ -304,19 +327,25 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
           e,
           activeBreakdownFilter.cardId,
           activeBreakdownFilter.name,
-          creditCards
+          creditCards,
+          categories
         );
         if (!matches) return false;
       } else if (activeBreakdownFilter.type === 'METHOD') {
-        if (activeBreakdownFilter.methodId && e.paymentMethodId) {
-          if (e.paymentMethodId === activeBreakdownFilter.methodId) return true;
-        }
-        if (e.paymentMethod !== activeBreakdownFilter.method) return false;
+        const matches = isExpenseMatchingPaymentMethod(
+          e,
+          activeBreakdownFilter.method,
+          activeBreakdownFilter.methodId,
+          categories,
+          paymentMethods,
+          creditCards
+        );
+        if (!matches) return false;
       }
 
       return true;
     });
-  }, [filteredExpenses, activeTabStatus, activeBreakdownFilter, creditCards]);
+  }, [filteredExpenses, activeTabStatus, activeBreakdownFilter, creditCards, categories, paymentMethods]);
 
   // Expenses matching active card/method filter (regardless of activeTabStatus) for accurate tab badges
   const expensesMatchingBreakdown = useMemo(() => {
@@ -327,17 +356,22 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
           e,
           activeBreakdownFilter.cardId,
           activeBreakdownFilter.name,
-          creditCards
+          creditCards,
+          categories
         );
       } else if (activeBreakdownFilter.type === 'METHOD') {
-        if (activeBreakdownFilter.methodId && e.paymentMethodId) {
-          if (e.paymentMethodId === activeBreakdownFilter.methodId) return true;
-        }
-        return e.paymentMethod === activeBreakdownFilter.method;
+        return isExpenseMatchingPaymentMethod(
+          e,
+          activeBreakdownFilter.method,
+          activeBreakdownFilter.methodId,
+          categories,
+          paymentMethods,
+          creditCards
+        );
       }
       return true;
     });
-  }, [filteredExpenses, activeBreakdownFilter, creditCards]);
+  }, [filteredExpenses, activeBreakdownFilter, creditCards, categories, paymentMethods]);
 
   // Categories summary for current month to show quick filter chips
   const monthCategoriesSummary = useMemo(() => {
@@ -544,6 +578,14 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
         </div>
       </div>
 
+      {/* Indefinite Continuous Subscriptions Expiry Alerts */}
+      <IndefiniteEndingAlerts
+        selectedMonth={selectedMonth}
+        installmentPurchases={installmentPurchases}
+        expenses={expenses}
+        onOpenExtendModal={(purchase) => setExtendModalPurchase(purchase)}
+      />
+
       {/* Financial Balances & Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Card 1: Total Despesas do Mês */}
@@ -662,6 +704,11 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Resumo de Últimas Parcelas e Compras à Vista (Não-Recorrentes) */}
+      <NonRecurringExpensesSummary
+        summary={monthInstallmentsAndSingleSummary}
+      />
 
       {/* Payment Methods & Credit Cards Breakdown Banner (Print 02 Feature) */}
       {(paymentBreakdown.cards.length > 0 || paymentBreakdown.methods.length > 0) && (
@@ -1670,6 +1717,19 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
         hasInstallmentsInSelection={hasInstallmentsInSelection}
         onConfirm={handleConfirmBulkDelete}
         onClose={() => setBulkDeleteModalOpen(false)}
+      />
+
+      {/* Modal de Prorrogação de Lançamento por Prazo Indeterminado */}
+      <ExtendIndefiniteModal
+        isOpen={!!extendModalPurchase}
+        purchase={extendModalPurchase}
+        onClose={() => setExtendModalPurchase(null)}
+        onExtend={async (purchaseId, months, amount) => {
+          await extendIndefinitePurchase(purchaseId, months, amount);
+        }}
+        onInterrupt={async (purchaseId) => {
+          await interruptInstallmentPurchase(purchaseId);
+        }}
       />
     </div>
   );

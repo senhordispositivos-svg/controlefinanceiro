@@ -12,10 +12,12 @@ import {
   Infinity as InfinityIcon,
   Ban,
   FileSpreadsheet,
+  CalendarPlus,
 } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
 import { InstallmentPurchase, Expense } from '../types';
 import { formatCurrency, getMonthName } from '../utils/formatters';
+import { ExtendIndefiniteModal } from './modals/ExtendIndefiniteModal';
 
 interface InstallmentsViewProps {
   onOpenExpenseModal: () => void;
@@ -28,8 +30,16 @@ export const InstallmentsView: React.FC<InstallmentsViewProps> = ({
   onDeleteInstallmentPurchase,
   onOpenImportExcel,
 }) => {
-  const { installmentPurchases, expenses, creditCards, toggleExpenseStatus, interruptInstallmentPurchase } = useFinance();
+  const {
+    installmentPurchases,
+    expenses,
+    creditCards,
+    toggleExpenseStatus,
+    interruptInstallmentPurchase,
+    extendIndefinitePurchase,
+  } = useFinance();
   const [expandedPurchases, setExpandedPurchases] = useState<Record<string, boolean>>({});
+  const [extendModalPurchase, setExtendModalPurchase] = useState<InstallmentPurchase | null>(null);
 
   const toggleExpand = (id: string) => {
     setExpandedPurchases((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -166,18 +176,29 @@ export const InstallmentsView: React.FC<InstallmentsViewProps> = ({
 
                     <div className="flex items-center gap-2">
                       {purchase.isIndefinite && !isInterrupted && (
-                        <button
-                          onClick={async () => {
-                            if (window.confirm('Deseja interromper este parcelamento por tempo indeterminado? As cobranças futuras pendentes serão canceladas.')) {
-                              await interruptInstallmentPurchase(purchase.id);
-                            }
-                          }}
-                          className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors"
-                          title="Interromper parcelamento a qualquer momento"
-                        >
-                          <Ban className="w-3.5 h-3.5" />
-                          <span>Interromper</span>
-                        </button>
+                        <>
+                          <button
+                            onClick={() => setExtendModalPurchase(purchase)}
+                            className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                            title="Estender projeção para mais 3 ou 6 meses"
+                          >
+                            <CalendarPlus className="w-3.5 h-3.5" />
+                            <span>Estender (+3/+6 m)</span>
+                          </button>
+
+                          <button
+                            onClick={async () => {
+                              if (window.confirm('Deseja interromper este parcelamento por tempo indeterminado? As cobranças futuras pendentes serão canceladas.')) {
+                                await interruptInstallmentPurchase(purchase.id);
+                              }
+                            }}
+                            className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                            title="Interromper parcelamento a qualquer momento"
+                          >
+                            <Ban className="w-3.5 h-3.5" />
+                            <span>Interromper</span>
+                          </button>
+                        </>
                       )}
 
                       <button
@@ -272,6 +293,19 @@ export const InstallmentsView: React.FC<InstallmentsViewProps> = ({
           })}
         </div>
       )}
+
+      {/* Modal de Prorrogação de Lançamento por Prazo Indeterminado */}
+      <ExtendIndefiniteModal
+        isOpen={!!extendModalPurchase}
+        purchase={extendModalPurchase}
+        onClose={() => setExtendModalPurchase(null)}
+        onExtend={async (purchaseId, months, amount) => {
+          await extendIndefinitePurchase(purchaseId, months, amount);
+        }}
+        onInterrupt={async (purchaseId) => {
+          await interruptInstallmentPurchase(purchaseId);
+        }}
+      />
     </div>
   );
 };

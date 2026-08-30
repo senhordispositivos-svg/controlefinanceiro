@@ -158,6 +158,7 @@ export async function ensureDatabaseTables() {
         "is_recurring" BOOLEAN DEFAULT FALSE,
         "recurring_expense_id" TEXT,
         "is_installment" BOOLEAN DEFAULT FALSE,
+        "is_indefinite" BOOLEAN DEFAULT FALSE,
         "installment_number" INTEGER,
         "total_installments" INTEGER,
         "installment_purchase_id" TEXT,
@@ -220,6 +221,7 @@ export async function ensureDatabaseTables() {
       ALTER TABLE "expenses" ADD COLUMN IF NOT EXISTS "notes" TEXT;
       ALTER TABLE "expenses" ADD COLUMN IF NOT EXISTS "is_recurring" BOOLEAN DEFAULT FALSE;
       ALTER TABLE "expenses" ADD COLUMN IF NOT EXISTS "is_installment" BOOLEAN DEFAULT FALSE;
+      ALTER TABLE "expenses" ADD COLUMN IF NOT EXISTS "is_indefinite" BOOLEAN DEFAULT FALSE;
       ALTER TABLE "expenses" ADD COLUMN IF NOT EXISTS "credit_card_id" TEXT;
       ALTER TABLE "expenses" ADD COLUMN IF NOT EXISTS "payment_method_id" TEXT;
 

@@ -21,7 +21,8 @@ import {
 import { useFinance } from '../context/FinanceContext';
 import { CreditCard, CustomPaymentMethod, PaymentMethod } from '../types';
 import { formatCurrency, getMonthName } from '../utils/formatters';
-import { getCanonicalCardInfo, isExpenseMatchingCard } from '../utils/cardUtils';
+import { getCanonicalCardInfo, isExpenseMatchingCard, isExpenseMatchingPaymentMethod } from '../utils/cardUtils';
+import { isIndefiniteExpense } from '../utils/calculations';
 import { PaymentDetailsModal } from './modals/PaymentDetailsModal';
 import { PaymentMethodModal } from './modals/PaymentMethodModal';
 
@@ -39,7 +40,9 @@ export const CardsView: React.FC<CardsViewProps> = ({
   const {
     creditCards,
     paymentMethods,
+    categories,
     expenses,
+    installmentPurchases,
     selectedMonth,
     deletePaymentMethod,
   } = useFinance();
@@ -105,9 +108,18 @@ export const CardsView: React.FC<CardsViewProps> = ({
       const monthPaid = monthExpenses.filter((e) => e.status === 'PAGA').reduce((sum, e) => sum + e.amount, 0);
       const monthPending = monthExpenses.filter((e) => e.status === 'PENDENTE').reduce((sum, e) => sum + e.amount, 0);
 
-      // Total used limit (all unpaid expenses on this card across months)
+      // Total used limit:
+      // - Fixed purchases & standard installments: all unpaid expenses (past, present, and future) consume limit
+      // - Indefinite recurring purchases (prazo indeterminado): only unpaid expenses for current and past months (referenceMonth <= selectedMonth) consume limit! Future projections do not lock limit.
       const usedLimit = cardExpenses
-        .filter((e) => e.status === 'PENDENTE')
+        .filter((e) => {
+          if (e.status !== 'PENDENTE') return false;
+          const isIndefinite = isIndefiniteExpense(e, installmentPurchases);
+          if (isIndefinite && e.referenceMonth && e.referenceMonth > selectedMonth) {
+            return false;
+          }
+          return true;
+        })
         .reduce((sum, exp) => sum + exp.amount, 0);
 
       const availableLimit = Math.max(0, group.totalLimit - usedLimit);
@@ -126,18 +138,22 @@ export const CardsView: React.FC<CardsViewProps> = ({
         monthCount: monthExpenses.length,
       };
     });
-  }, [creditCards, expenses, selectedMonth]);
+  }, [creditCards, expenses, selectedMonth, installmentPurchases]);
 
   // Consolidated Other Payment Methods (Pix, Boleto, Débito, etc.)
   const paymentMethodsSummary = useMemo(() => {
     return paymentMethods.map((pm) => {
       // Expenses matching this payment method in the selected month
       const monthExpenses = expenses.filter((e) => {
-        if (e.referenceMonth !== selectedMonth) return false;
-        return (
-          e.paymentMethodId === pm.id ||
-          (e.paymentMethod === pm.type && (!e.paymentMethodId || e.paymentMethodId === pm.id)) ||
-          (e.paymentMethodName && e.paymentMethodName.toLowerCase() === pm.name.toLowerCase())
+        const expMonth = e.referenceMonth || (e.date ? e.date.substring(0, 7) : '');
+        if (expMonth !== selectedMonth) return false;
+        return isExpenseMatchingPaymentMethod(
+          e,
+          pm.type,
+          pm.id,
+          categories,
+          paymentMethods,
+          creditCards
         );
       });
 
@@ -153,7 +169,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
         count: monthExpenses.length,
       };
     });
-  }, [paymentMethods, expenses, selectedMonth]);
+  }, [paymentMethods, expenses, selectedMonth, categories, creditCards]);
 
   const handleOpenDrillDownCard = (group: any) => {
     setSelectedDrillDownCard({

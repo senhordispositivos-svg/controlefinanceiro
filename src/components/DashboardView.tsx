@@ -45,9 +45,13 @@ import {
   getCurrentMonth,
 } from '../utils/formatters';
 import { calculateMonthSummary } from '../utils/calculations';
-import { Expense, ActiveTab } from '../types';
+import { resolveEffectivePaymentMethod } from '../utils/cardUtils';
+import { Expense, ActiveTab, InstallmentPurchase } from '../types';
 import { GeminiFinancialCard } from './GeminiFinancialCard';
 import { UpcomingDueAlerts } from './UpcomingDueAlerts';
+import { NonRecurringExpensesSummary } from './NonRecurringExpensesSummary';
+import { IndefiniteEndingAlerts } from './IndefiniteEndingAlerts';
+import { ExtendIndefiniteModal } from './modals/ExtendIndefiniteModal';
 
 interface DashboardViewProps {
   onNavigateTab: (tab: ActiveTab) => void;
@@ -77,6 +81,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     goToNextMonth,
     goToCurrentMonth,
     monthSummary,
+    monthInstallmentsAndSingleSummary,
     expenses,
     salaries,
     incomes,
@@ -84,9 +89,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     cardLimitSummaries,
     categories,
     paymentMethods,
+    installmentPurchases,
+    extendIndefinitePurchase,
+    interruptInstallmentPurchase,
   } = useFinance();
 
   const [chartViewMode, setChartViewMode] = useState<'month' | 'evolution'>('month');
+  const [extendModalPurchase, setExtendModalPurchase] = useState<InstallmentPurchase | null>(null);
 
   // Filter current month expenses
   const monthExpenses = useMemo(
@@ -204,7 +213,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     };
 
     for (const exp of monthExpenses) {
-      const method = exp.paymentMethod || 'OUTRO';
+      const method = resolveEffectivePaymentMethod(exp, categories, creditCards);
       const label =
         method === 'CARTAO_CREDITO'
           ? 'Cartão de Crédito'
@@ -237,7 +246,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         percentage: Math.round((item.value / total) * 100),
       }))
       .sort((a, b) => b.value - a.value);
-  }, [monthExpenses, monthSummary.totalExpenses]);
+  }, [monthExpenses, monthSummary.totalExpenses, categories, creditCards]);
 
   // Key Financial Health Ratios
   const incomeCommitmentRate = useMemo(() => {
@@ -455,6 +464,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <UpcomingDueAlerts
         onNavigateTab={onNavigateTab}
         onOpenExpenseModal={onOpenExpenseModal}
+      />
+
+      {/* Indefinite Continuous Subscriptions Expiry Alerts */}
+      <IndefiniteEndingAlerts
+        selectedMonth={selectedMonth}
+        installmentPurchases={installmentPurchases}
+        expenses={expenses}
+        onOpenExtendModal={(purchase) => setExtendModalPurchase(purchase)}
+      />
+
+      {/* Resumo de Últimas Parcelas e Compras à Vista (Não-Recorrentes) */}
+      <NonRecurringExpensesSummary
+        summary={monthInstallmentsAndSingleSummary}
       />
 
       {/* INDICATORS OF FINANCIAL HEALTH BAR */}
@@ -961,6 +983,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Gemini AI Financial Analysis & Savings Card */}
       <GeminiFinancialCard />
+
+      {/* Modal de Prorrogação de Lançamento por Prazo Indeterminado */}
+      <ExtendIndefiniteModal
+        isOpen={!!extendModalPurchase}
+        purchase={extendModalPurchase}
+        onClose={() => setExtendModalPurchase(null)}
+        onExtend={async (purchaseId, months, amount) => {
+          await extendIndefinitePurchase(purchaseId, months, amount);
+        }}
+        onInterrupt={async (purchaseId) => {
+          await interruptInstallmentPurchase(purchaseId);
+        }}
+      />
     </div>
   );
 };
