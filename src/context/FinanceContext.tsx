@@ -33,7 +33,14 @@ import {
   MonthInstallmentsAndSingleSummary,
 } from '../types';
 import { DEFAULT_CATEGORIES } from '../utils/defaultCategories';
-import { getCanonicalCardInfo, isExpenseMatchingCard } from '../utils/cardUtils';
+import {
+  getCanonicalCardInfo,
+  isExpenseMatchingCard,
+  isPixExpense,
+  isBoletoExpense,
+  isDebitExpense,
+  isCashExpense,
+} from '../utils/cardUtils';
 import { handleFirestoreError, OperationType } from '../firebase/errorHandler';
 import { getCurrentMonth, getAdjacentMonth } from '../utils/formatters';
 import {
@@ -1584,6 +1591,16 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       const dateStr = `${nextMonth}-${dayStr}`;
       const currentNum = lastNum + i;
 
+      const effectiveMethod: PaymentMethod = isPixExpense({ cardName: purchase.cardName, cardId: purchase.cardId, categoryName: purchase.categoryName, categoryId: purchase.categoryId })
+        ? 'PIX'
+        : isBoletoExpense({ cardName: purchase.cardName, cardId: purchase.cardId, categoryName: purchase.categoryName, categoryId: purchase.categoryId })
+        ? 'BOLETO'
+        : isDebitExpense({ cardName: purchase.cardName, cardId: purchase.cardId, categoryName: purchase.categoryName, categoryId: purchase.categoryId })
+        ? 'CARTAO_DEBITO'
+        : isCashExpense({ cardName: purchase.cardName, cardId: purchase.cardId, categoryName: purchase.categoryName, categoryId: purchase.categoryId })
+        ? 'DINHEIRO'
+        : 'CARTAO_CREDITO';
+
       newExpenses.push({
         id: isDemoUser ? `demo-inst-exp-${purchaseId}-${currentNum}-${Date.now()}` : '',
         userId: currentUser.uid,
@@ -1593,7 +1610,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         referenceMonth: nextMonth,
         categoryId: purchase.categoryId,
         categoryName: purchase.categoryName,
-        paymentMethod: 'CARTAO_CREDITO',
+        paymentMethod: effectiveMethod,
         cardId: purchase.cardId,
         cardName: purchase.cardName,
         isInstallment: true,

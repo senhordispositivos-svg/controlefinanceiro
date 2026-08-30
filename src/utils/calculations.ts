@@ -12,6 +12,7 @@ import {
   BudgetExecutionItem,
   InstallmentPurchase,
   MonthInstallmentsAndSingleSummary,
+  PaymentMethod,
 } from '../types';
 import { getAdjacentMonth, splitInstallments } from './formatters';
 import { isExpenseMatchingCard, isPixExpense, isBoletoExpense, isDebitExpense, isCashExpense } from './cardUtils';
@@ -246,6 +247,16 @@ export const generateInstallmentsPlan = (
     const projectionMonths = 6;
     const monthlyVal = totalAmount; // For indefinite, totalAmount entered is the monthly amount
 
+    const effectiveMethod: PaymentMethod = isPixExpense({ cardName, cardId, categoryName, categoryId })
+      ? 'PIX'
+      : isBoletoExpense({ cardName, cardId, categoryName, categoryId })
+      ? 'BOLETO'
+      : isDebitExpense({ cardName, cardId, categoryName, categoryId })
+      ? 'CARTAO_DEBITO'
+      : isCashExpense({ cardName, cardId, categoryName, categoryId })
+      ? 'DINHEIRO'
+      : 'CARTAO_CREDITO';
+
     for (let i = 0; i < projectionMonths; i++) {
       const installmentMonth = getAdjacentMonth(startMonth, i);
       const dayStr = String(Math.min(28, Math.max(1, defaultDay))).padStart(2, '0');
@@ -259,7 +270,7 @@ export const generateInstallmentsPlan = (
         referenceMonth: installmentMonth,
         categoryId,
         categoryName,
-        paymentMethod: 'CARTAO_CREDITO',
+        paymentMethod: effectiveMethod,
         cardId,
         cardName,
         isInstallment: true,
@@ -277,6 +288,15 @@ export const generateInstallmentsPlan = (
 
   // Standard fixed installments (e.g. 2x to 36x)
   const parts = splitInstallments(totalAmount, count);
+  const effectiveMethod: PaymentMethod = isPixExpense({ cardName, cardId, categoryName, categoryId })
+    ? 'PIX'
+    : isBoletoExpense({ cardName, cardId, categoryName, categoryId })
+    ? 'BOLETO'
+    : isDebitExpense({ cardName, cardId, categoryName, categoryId })
+    ? 'CARTAO_DEBITO'
+    : isCashExpense({ cardName, cardId, categoryName, categoryId })
+    ? 'DINHEIRO'
+    : 'CARTAO_CREDITO';
 
   for (let i = 0; i < count; i++) {
     const installmentMonth = getAdjacentMonth(startMonth, i);
@@ -291,7 +311,7 @@ export const generateInstallmentsPlan = (
       referenceMonth: installmentMonth,
       categoryId,
       categoryName,
-      paymentMethod: 'CARTAO_CREDITO',
+      paymentMethod: effectiveMethod,
       cardId,
       cardName,
       isInstallment: true,
@@ -351,11 +371,25 @@ export const calculateMonthInstallmentsAndSingleSummary = (
   const singleExpensesTotal = singleExpenses.reduce((acc, curr) => acc + (curr.amount || 0), 0);
   const singleExpensesCount = singleExpenses.length;
 
-  const singleCardExpenses = singleExpenses.filter((e) => e.paymentMethod === 'CARTAO_CREDITO');
+  const singleCardExpenses = singleExpenses.filter(
+    (e) =>
+      e.paymentMethod === 'CARTAO_CREDITO' &&
+      !isPixExpense(e) &&
+      !isBoletoExpense(e) &&
+      !isDebitExpense(e) &&
+      !isCashExpense(e)
+  );
   const singleCardExpensesTotal = singleCardExpenses.reduce((acc, curr) => acc + (curr.amount || 0), 0);
   const singleCardExpensesCount = singleCardExpenses.length;
 
-  const singleOtherExpenses = singleExpenses.filter((e) => e.paymentMethod !== 'CARTAO_CREDITO');
+  const singleOtherExpenses = singleExpenses.filter(
+    (e) =>
+      e.paymentMethod !== 'CARTAO_CREDITO' ||
+      isPixExpense(e) ||
+      isBoletoExpense(e) ||
+      isDebitExpense(e) ||
+      isCashExpense(e)
+  );
   const singleOtherExpensesTotal = singleOtherExpenses.reduce((acc, curr) => acc + (curr.amount || 0), 0);
   const singleOtherExpensesCount = singleOtherExpenses.length;
 

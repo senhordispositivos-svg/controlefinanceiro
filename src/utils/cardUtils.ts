@@ -39,7 +39,7 @@ const isBancoDoBrasilMatch = (s: string) =>
 
 /**
  * Identifica se uma despesa é do tipo PIX considerando paymentMethod,
- * categoryName, categoryId, paymentMethodName ou descrição/notas.
+ * cardName, cardId, categoryName, categoryId, paymentMethodName ou descrição/notas.
  */
 export function isPixExpense(
   expense: Partial<Expense>,
@@ -50,15 +50,25 @@ export function isPixExpense(
   // 1. Check explicit paymentMethod
   if (expense.paymentMethod === 'PIX') return true;
 
-  // 2. Check paymentMethodName
+  // 2. Check cardName & cardId
+  const cardName = (expense.cardName || '').toLowerCase().trim();
+  if (cardName === 'pix' || /\bpix\b/i.test(cardName)) return true;
+
+  const cardId = (expense.cardId || '').toLowerCase().trim();
+  if (cardId === 'default-pm-pix' || cardId === 'pix' || cardId.includes('pix')) return true;
+
+  // 3. Check paymentMethodId & paymentMethodName
+  const pmId = (expense.paymentMethodId || '').toLowerCase().trim();
+  if (pmId === 'default-pm-pix' || pmId === 'pix' || pmId.includes('pix')) return true;
+
   const pmName = (expense.paymentMethodName || '').toLowerCase().trim();
   if (pmName === 'pix' || /\bpix\b/i.test(pmName)) return true;
 
-  // 3. Check categoryName
+  // 4. Check categoryName
   const catName = (expense.categoryName || '').toLowerCase().trim();
   if (catName === 'pix' || /\bpix\b/i.test(catName)) return true;
 
-  // 4. Check category by categoryId
+  // 5. Check category by categoryId
   if (expense.categoryId && categories.length > 0) {
     const cat = categories.find((c) => c.id === expense.categoryId);
     if (cat) {
@@ -67,16 +77,14 @@ export function isPixExpense(
     }
   }
 
-  // 5. Check description or notes if marked as Pix
+  // 6. Check description or notes if marked as Pix
   const desc = (expense.description || '').toLowerCase();
   const notes = (expense.notes || '').toLowerCase();
   if (
-    (/\bpix\b/i.test(desc) && (desc.startsWith('pix') || desc.includes('[pix]') || desc.includes('(pix)'))) ||
-    (/\bpix\b/i.test(notes) && (notes.includes('chave pix') || notes.includes('via pix') || notes.includes('[pix]')))
+    (/\bpix\b/i.test(desc) && (desc.startsWith('pix') || desc.includes('[pix]') || desc.includes('(pix)') || desc.includes('via pix') || desc.includes('no pix'))) ||
+    (/\bpix\b/i.test(notes) && (notes.includes('chave pix') || notes.includes('via pix') || notes.includes('[pix]') || notes.includes('pago com pix') || notes.includes('pagamento pix')))
   ) {
-    if (expense.paymentMethod !== 'CARTAO_CREDITO' || !expense.cardId) {
-      return true;
-    }
+    return true;
   }
 
   return false;
@@ -88,14 +96,31 @@ export function isBoletoExpense(
 ): boolean {
   if (!expense) return false;
   if (expense.paymentMethod === 'BOLETO') return true;
+
+  const cardName = (expense.cardName || '').toLowerCase().trim();
+  if (cardName.includes('boleto')) return true;
+
+  const cardId = (expense.cardId || '').toLowerCase().trim();
+  if (cardId.includes('boleto')) return true;
+
+  const pmId = (expense.paymentMethodId || '').toLowerCase().trim();
+  if (pmId.includes('boleto')) return true;
+
   const pmName = (expense.paymentMethodName || '').toLowerCase().trim();
   if (pmName.includes('boleto')) return true;
+
   const catName = (expense.categoryName || '').toLowerCase().trim();
   if (catName.includes('boleto')) return true;
+
   if (expense.categoryId && categories.length > 0) {
     const cat = categories.find((c) => c.id === expense.categoryId);
     if (cat && cat.name.toLowerCase().includes('boleto')) return true;
   }
+
+  const desc = (expense.description || '').toLowerCase();
+  const notes = (expense.notes || '').toLowerCase();
+  if (desc.includes('boleto') || notes.includes('boleto')) return true;
+
   return false;
 }
 
@@ -105,14 +130,31 @@ export function isDebitExpense(
 ): boolean {
   if (!expense) return false;
   if (expense.paymentMethod === 'CARTAO_DEBITO') return true;
+
+  const cardName = (expense.cardName || '').toLowerCase().trim();
+  if (cardName.includes('debito') || cardName.includes('débito')) return true;
+
+  const cardId = (expense.cardId || '').toLowerCase().trim();
+  if (cardId.includes('debito') || cardId.includes('débito')) return true;
+
+  const pmId = (expense.paymentMethodId || '').toLowerCase().trim();
+  if (pmId.includes('debito') || pmId.includes('débito')) return true;
+
   const pmName = (expense.paymentMethodName || '').toLowerCase().trim();
   if (pmName.includes('debito') || pmName.includes('débito')) return true;
+
   const catName = (expense.categoryName || '').toLowerCase().trim();
   if (catName.includes('debito') || catName.includes('débito')) return true;
+
   if (expense.categoryId && categories.length > 0) {
     const cat = categories.find((c) => c.id === expense.categoryId);
     if (cat && (cat.name.toLowerCase().includes('debito') || cat.name.toLowerCase().includes('débito'))) return true;
   }
+
+  const desc = (expense.description || '').toLowerCase();
+  const notes = (expense.notes || '').toLowerCase();
+  if (desc.includes('débito') || desc.includes('debito') || notes.includes('débito') || notes.includes('debito')) return true;
+
   return false;
 }
 
@@ -122,14 +164,31 @@ export function isCashExpense(
 ): boolean {
   if (!expense) return false;
   if (expense.paymentMethod === 'DINHEIRO') return true;
+
+  const cardName = (expense.cardName || '').toLowerCase().trim();
+  if (cardName.includes('dinheiro') || cardName.includes('especie') || cardName.includes('espécie')) return true;
+
+  const cardId = (expense.cardId || '').toLowerCase().trim();
+  if (cardId.includes('dinheiro') || cardId.includes('especie') || cardId.includes('espécie')) return true;
+
+  const pmId = (expense.paymentMethodId || '').toLowerCase().trim();
+  if (pmId.includes('dinheiro') || pmId.includes('especie') || pmId.includes('espécie')) return true;
+
   const pmName = (expense.paymentMethodName || '').toLowerCase().trim();
   if (pmName.includes('dinheiro') || pmName.includes('especie') || pmName.includes('espécie')) return true;
+
   const catName = (expense.categoryName || '').toLowerCase().trim();
   if (catName.includes('dinheiro') || catName.includes('especie') || catName.includes('espécie')) return true;
+
   if (expense.categoryId && categories.length > 0) {
     const cat = categories.find((c) => c.id === expense.categoryId);
     if (cat && (cat.name.toLowerCase().includes('dinheiro') || cat.name.toLowerCase().includes('especie') || cat.name.toLowerCase().includes('espécie'))) return true;
   }
+
+  const desc = (expense.description || '').toLowerCase();
+  const notes = (expense.notes || '').toLowerCase();
+  if (desc.includes('dinheiro') || desc.includes('em espécie') || notes.includes('dinheiro') || notes.includes('em espécie')) return true;
+
   return false;
 }
 
