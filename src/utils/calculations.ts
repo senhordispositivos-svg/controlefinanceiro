@@ -47,32 +47,47 @@ export const getEffectiveSalariesForMonth = (
   settings?: UserSettings | null
 ): Salary[] => {
   const monthSalaries = salaries.filter((s) => s.referenceMonth === month);
-  if (monthSalaries.length > 0) {
+
+  // Check if default standardized salary is active in settings
+  const hasDefaultSalary = !!(
+    settings?.defaultSalaryAmount &&
+    settings.defaultSalaryAmount > 0 &&
+    settings.defaultSalaryActive !== false
+  );
+
+  const defaultSalaryItem: Salary | null = hasDefaultSalary
+    ? {
+        id: `std-salary-${month}`,
+        userId: settings!.userId,
+        amount: settings!.defaultSalaryAmount!,
+        referenceMonth: month,
+        payDate: `${month}-${String(Math.min(28, Math.max(1, settings?.defaultSalaryPayDay || 5))).padStart(2, '0')}`,
+        description: settings?.defaultSalaryDescription || 'Salário Mensal Base (Padrão)',
+        status: settings?.defaultSalaryStatus || 'RECEIVED',
+        isStandardDefault: true,
+        repeatMonthly: true,
+        createdAt: settings?.createdAt || new Date().toISOString(),
+        updatedAt: settings?.updatedAt || new Date().toISOString(),
+      }
+    : null;
+
+  if (monthSalaries.length === 0) {
+    return defaultSalaryItem ? [defaultSalaryItem] : [];
+  }
+
+  // If there are specific salary items for this month, check if one of them is already the standard/main base salary
+  const hasStandardInList = monthSalaries.some(
+    (s) => s.isStandardDefault || (s.id && s.id.startsWith('std-salary-'))
+  );
+
+  // If a standard entry is already stored in the array, or there's no settings default salary, return monthSalaries
+  if (hasStandardInList || !defaultSalaryItem) {
     return monthSalaries;
   }
 
-  // If no specific salary registered for this month, check default standardized salary
-  if (settings?.defaultSalaryAmount && settings.defaultSalaryAmount > 0 && settings.defaultSalaryActive !== false) {
-    const payDay = settings.defaultSalaryPayDay || 5;
-    const dayStr = String(Math.min(28, Math.max(1, payDay))).padStart(2, '0');
-    return [
-      {
-        id: `std-salary-${month}`,
-        userId: settings.userId,
-        amount: settings.defaultSalaryAmount,
-        referenceMonth: month,
-        payDate: `${month}-${dayStr}`,
-        description: settings.defaultSalaryDescription || 'Salário Mensal Base (Padrão)',
-        status: settings.defaultSalaryStatus || 'RECEIVED',
-        isStandardDefault: true,
-        repeatMonthly: true,
-        createdAt: settings.createdAt || new Date().toISOString(),
-        updatedAt: settings.updatedAt || new Date().toISOString(),
-      },
-    ];
-  }
-
-  return [];
+  // If the user added specific salary additions (like 1/3 de Férias, 13º Salário, Adiantamento, etc.)
+  // but doesn't have a stored base salary document, keep the base salary alongside the additions!
+  return [defaultSalaryItem, ...monthSalaries];
 };
 
 /**
@@ -86,7 +101,8 @@ export const getEffectiveIncomesForMonth = (
 ): ExtraIncome[] => {
   return incomes.filter((i) => {
     if (i.isRecurring) return true;
-    return i.referenceMonth === month;
+    const itemMonth = i.referenceMonth || (i.date ? i.date.substring(0, 7) : '');
+    return itemMonth === month;
   });
 };
 

@@ -573,10 +573,10 @@ export async function testDatabaseConnection() {
     return {
       status: 'ok',
       connected: true,
-      message: 'Conectado ao PostgreSQL (Supabase Cloud) com sucesso!',
-      database: (res.rows[0] as any)?.db || 'postgres',
-      user: (res.rows[0] as any)?.usr || 'postgres',
-      version: (res.rows[0] as any)?.ver || 'PostgreSQL 16',
+      message: 'Conectado ao PostgreSQL (Cloud SQL) com sucesso!',
+      database: (res.rows[0] as any)?.db || 'cloud_sql_development_database',
+      user: (res.rows[0] as any)?.usr || 'ai_studio_admin',
+      version: (res.rows[0] as any)?.ver || 'PostgreSQL',
       latencyMs: latency,
       timestamp: new Date().toISOString(),
     };

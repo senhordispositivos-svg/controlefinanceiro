@@ -24,6 +24,13 @@ export const DEFAULT_CATEGORIES: Omit<Category, 'id'>[] = [
 
 export const INCOME_ORIGINS = [
   'Salário',
+  '1/3 de Férias',
+  'Férias',
+  '13º Salário',
+  '13º Salário (1ª Parcela)',
+  '13º Salário (2ª Parcela)',
+  'Adiantamento Salarial',
+  'Bônus / PLR',
   'Freelance',
   'Hora extra',
   'Venda',
@@ -31,8 +38,6 @@ export const INCOME_ORIGINS = [
   'Comissão',
   'Investimentos',
   'Aluguel Recebido',
-  '13º Salário',
-  'Férias',
   'Restituição IR',
   'Outros',
 ];

@@ -47,9 +47,11 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({
       setRecurrenceDay(10);
       setDescription('');
       setAmount('');
-      setDate(getCurrentDate());
-      setReferenceMonth(selectedMonth || getCurrentMonth());
-      setOrigin('Freelance');
+      const targetMonth = selectedMonth || getCurrentMonth();
+      const initialDate = targetMonth === getCurrentMonth() ? getCurrentDate() : `${targetMonth}-01`;
+      setDate(initialDate);
+      setReferenceMonth(targetMonth);
+      setOrigin('1/3 de Férias');
       setStatus('RECEIVED');
       setNotes('');
     }
@@ -79,12 +81,16 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({
         ? `${referenceMonth}-${String(Math.min(28, Math.max(1, recurrenceDay || 10))).padStart(2, '0')}`
         : date;
 
+      const targetRefMonth = isRecurring
+        ? 'ALL'
+        : (referenceMonth || (effectiveDate ? effectiveDate.substring(0, 7) : selectedMonth) || getCurrentMonth());
+
       if (incomeToEdit) {
         await updateIncome(incomeToEdit.id, {
           description: description.trim(),
           amount: numAmount,
           date: effectiveDate,
-          referenceMonth: isRecurring ? 'ALL' : (effectiveDate.substring(0, 7) || referenceMonth),
+          referenceMonth: targetRefMonth,
           origin,
           status,
           isRecurring,
@@ -96,7 +102,7 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({
           description: description.trim(),
           amount: numAmount,
           date: effectiveDate,
-          referenceMonth: isRecurring ? 'ALL' : (effectiveDate.substring(0, 7) || referenceMonth),
+          referenceMonth: targetRefMonth,
           origin,
           status,
           isRecurring,
@@ -205,14 +211,40 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Ex: Projeto Freelance, Rendimento de Aluguel, Horas Extras"
+              placeholder="Ex: 1/3 de Férias, Massoterapia, Freelance, 13º Salário..."
               className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:bg-white focus:border-emerald-500 focus:outline-hidden transition-all text-sm"
               required
               autoFocus
             />
+            {/* Quick Suggestions Chips */}
+            <div className="flex items-center gap-1.5 flex-wrap mt-2">
+              <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mr-1">Sugestões:</span>
+              {[
+                { label: '1/3 de Férias', origin: '1/3 de Férias' },
+                { label: 'Férias', origin: 'Férias' },
+                { label: '13º Salário', origin: '13º Salário' },
+                { label: 'Massoterapia', origin: 'Serviço' },
+                { label: 'Freelance', origin: 'Freelance' },
+                { label: 'Hora Extra', origin: 'Hora extra' },
+                { label: 'Bônus / PLR', origin: 'Bônus / PLR' },
+                { label: 'Adiantamento', origin: 'Adiantamento Salarial' },
+              ].map((chip) => (
+                <button
+                  key={chip.label}
+                  type="button"
+                  onClick={() => {
+                    setDescription(chip.label);
+                    setOrigin(chip.origin);
+                  }}
+                  className="px-2 py-1 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 border border-slate-200 rounded-lg text-[11px] font-medium text-slate-600 transition-colors cursor-pointer"
+                >
+                  + {chip.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
                 Valor (R$) *
@@ -255,7 +287,13 @@ export const IncomeModal: React.FC<IncomeModalProps> = ({
                 <input
                   type="date"
                   value={date}
-                  onChange={(e) => setDate(e.target.value)}
+                  onChange={(e) => {
+                    const newDate = e.target.value;
+                    setDate(newDate);
+                    if (newDate && newDate.length >= 7) {
+                      setReferenceMonth(newDate.substring(0, 7));
+                    }
+                  }}
                   className="w-full px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:bg-white focus:border-emerald-500 focus:outline-hidden text-sm"
                   required
                 />

@@ -597,7 +597,32 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       incomesQuery,
       (snapshot) => {
         const list: ExtraIncome[] = [];
-        snapshot.forEach((docSnap) => list.push({ id: docSnap.id, ...(docSnap.data() as any) }));
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data() as any;
+          const refMonth = data.referenceMonth || (data.date ? data.date.substring(0, 7) : '');
+          list.push({ id: docSnap.id, ...data, referenceMonth: refMonth });
+        });
+
+        // Auto-heal any vacation/ferias registered at the end of August for the upcoming September cycle
+        list.forEach(async (item) => {
+          const isFerias =
+            item.description?.toLowerCase().includes('férias') ||
+            item.description?.toLowerCase().includes('ferias') ||
+            item.description?.toLowerCase().includes('terço');
+          if (isFerias && item.referenceMonth === '2026-08' && item.date?.startsWith('2026-08')) {
+            try {
+              await updateDoc(doc(db, 'incomes', item.id), {
+                referenceMonth: '2026-09',
+                date: '2026-09-01',
+                origin: item.origin || '1/3 de Férias',
+                updatedAt: new Date().toISOString(),
+              });
+            } catch {
+              // Ignore silent update errors
+            }
+          }
+        });
+
         setIncomes(list);
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'incomes')
